@@ -35,12 +35,16 @@ void PhpocEmail::setOutgoingServer(const char *host, uint16_t port)
 {
 	if(host && host[0])
 		Phpoc.command(F("smtp server %s %u"), host, port);
+	else
+		Phpoc.command(F("smtp server"));
 }
 
 void PhpocEmail::setOutgoingServer(const __FlashStringHelper *host, uint16_t port)
 {
-	if(host && pgm_read_byte(host));
+	if(host && pgm_read_byte(host))
 		Phpoc.command(F("smtp server %S %u"), host, port);
+	else
+		Phpoc.command(F("smtp server"));
 }
 
 void PhpocEmail::setOutgoingLogin(const char *username, const char *password)
@@ -194,8 +198,16 @@ uint8_t PhpocEmail::send()
 		Phpoc.logFlush(1);
 #endif
 
-	if(Phpoc.command(F("smtp send")) < 0)
-		return 0;
+	if(Phpoc.flags & PF_IP6)
+	{
+		if(Phpoc.command(F("smtp send ip6")) < 0)
+			return 0;
+	}
+	else
+	{
+		if(Phpoc.command(F("smtp send")) < 0)
+			return 0;
+	}
 
 	while(1)
 	{
@@ -209,7 +221,7 @@ uint8_t PhpocEmail::send()
 
 		if(len)
 		{
-			status = Phpoc.parseInt();
+			status = Phpoc.readInt();
 			break;
 		}
 

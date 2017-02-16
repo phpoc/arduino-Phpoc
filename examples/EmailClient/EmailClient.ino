@@ -1,3 +1,5 @@
+/* arduino email client - send email to server directly */
+
 #include "SPI.h"
 #include "Phpoc.h"
 
@@ -11,7 +13,7 @@ void setup() {
   Phpoc.begin(PF_LOG_SPI | PF_LOG_NET | PF_LOG_APP);
   //Phpoc.begin();
   
-  Serial.println("Email Client Test");
+  Serial.println("Sending email to server directly");
 
   // setup From/To/Subject
   email.setFrom("from_email_address", "from_user_name");

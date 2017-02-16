@@ -144,6 +144,9 @@ static void vsp_out_str(char *str, uint8_t flags)
 {
 	char ch;
 
+	if(str == NULL)
+		return;
+
 	while(1)
 	{
 		if(flags & FLAG_PGM_STR)
@@ -286,7 +289,6 @@ int PhpocClass::vsprintf(char *str, const char *format, va_list args)
 	return ::__vsprintf(format, args, false);
 }
 
-/*
 int PhpocClass::sprintf(char *str, const __FlashStringHelper *format, ...)
 {
 	va_list args;
@@ -301,6 +303,7 @@ int PhpocClass::sprintf(char *str, const __FlashStringHelper *format, ...)
 
 	return len;
 }
+
 int PhpocClass::sprintf(char *str, const char *format, ...)
 {
 	va_list args;
@@ -315,6 +318,23 @@ int PhpocClass::sprintf(char *str, const char *format, ...)
 
 	return len;
 }
+
+int phpoc_sprintf(char *str, const __FlashStringHelper *format, ...)
+{
+	va_list args;
+	int len;
+
+	vsp_ptr = str;
+	vsp_count = 0;
+
+	va_start(args, format);
+	len = ::__vsprintf((const char *)format, args, true);
+	va_end(args);
+
+	return len;
+}
+
+/*
 int PhpocClass::printf(const __FlashStringHelper *format, ...)
 {
 	va_list args;

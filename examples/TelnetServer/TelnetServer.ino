@@ -1,3 +1,5 @@
+/* arduino telnet server - 4 listening sessions */
+
 #include "SPI.h"
 #include "Phpoc.h"
 

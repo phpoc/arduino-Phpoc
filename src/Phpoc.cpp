@@ -90,7 +90,7 @@ static uint16_t atoi_u16(const char *nptr)
 
 	u16 = 0;
 
-	while((*nptr >= '0') && (*nptr <= '9'))
+	while(isdigit(*nptr))
 	{
 		u16 *= 10;
 		u16 += (*nptr - '0');
@@ -391,7 +391,8 @@ IPAddress PhpocClass::inet_aton(const char *str)
 			return INADDR_NONE;
 
 		digit_ptr = str;
-		while((*str >= '0') && (*str <= '9'))
+
+		while(isdigit(*str))
 		{
 			str++;
 			len++;
@@ -494,24 +495,7 @@ int PhpocClass::read(uint8_t *rbuf, size_t rlen)
 	return 0;
 }
 
-IPAddress PhpocClass::parseIP()
-{
-	char addr_str[16]; /* x.x.x.x (min 7), xxx.xxx.xxx.xxx (max 15) */
-	int rlen;
-
-	if(!(flags & PF_SHIELD))
-		return INADDR_NONE;
-
-	if((rlen = read((uint8_t *)addr_str, 15)))
-	{
-		addr_str[rlen] = 0x00;
-		return inet_aton(addr_str);
-	}
-	else
-		return INADDR_NONE;
-}
-
-uint16_t PhpocClass::parseInt()
+uint16_t PhpocClass::readInt()
 {
 	char int_str[6]; /* 65535 + NULL(0x00) */
 	uint16_t u16;
@@ -530,27 +514,63 @@ uint16_t PhpocClass::parseInt()
 		return 0;
 }
 
-IPAddress PhpocClass::getHostByName(const char *host, int wait_ms)
+IPAddress PhpocClass::readIP()
 {
-	IPAddress ipaddr;
-	int len;
+	char addr_str[16]; /* x.x.x.x (min 7), xxx.xxx.xxx.xxx (max 15) */
+	int rlen;
 
 	if(!(flags & PF_SHIELD))
 		return INADDR_NONE;
 
+	if((rlen = read((uint8_t *)addr_str, 15)))
+	{
+		addr_str[rlen] = 0x00;
+		return inet_aton(addr_str);
+	}
+	else
+		return INADDR_NONE;
+}
+
+IP6Address PhpocClass::readIP6()
+{
+	char addr_str[40]; /* ::0 (min 3), xxxx:..:xxxx (max 39) */
+	int rlen;
+
+	if(!(flags & PF_SHIELD))
+		return IN6ADDR_NONE;
+
+	if((rlen = read((uint8_t *)addr_str, 40)))
+	{
+		addr_str[rlen] = 0x00;
+		return IP6Address(addr_str);
+	}
+	else
+		return IN6ADDR_NONE;
+}
+
+int PhpocClass::getHostByName(const char *hostname, IPAddress &ipaddr, int wait_ms)
+{
+	int len;
+
+	if(!(flags & PF_SHIELD))
+	{
+		ipaddr = INADDR_NONE;
+		return 4;
+	}
+
 #ifdef PF_LOG_NET
 	if((Phpoc.flags & PF_LOG_NET) && Serial)
 	{
-		Serial.print(F("log> phpoc_dns: query "));
-		Serial.print(host);
+		Serial.print(F("log> phpoc_dns: query A "));
+		Serial.print(hostname);
 		Serial.print(F(" >> "));
 	}
 #endif
 
-	len = Phpoc.command(F("dns query %s %u"), host, wait_ms);
+	len = Phpoc.command(F("dns query A %s %u"), hostname, wait_ms);
 
 	if(len > 0)
-		ipaddr = Phpoc.parseIP();
+		ipaddr = Phpoc.readIP();
 	else
 		ipaddr = INADDR_NONE;
 
@@ -562,7 +582,44 @@ IPAddress PhpocClass::getHostByName(const char *host, int wait_ms)
 	}
 #endif
 
-	return ipaddr;
+	return 4;
+}
+
+int PhpocClass::getHostByName6(const char *hostname, IP6Address &ip6addr, int wait_ms)
+{
+	int len;
+
+	if(!(flags & PF_SHIELD))
+	{
+		ip6addr = IN6ADDR_NONE;
+		return 16;
+	}
+
+#ifdef PF_LOG_NET
+	if((Phpoc.flags & PF_LOG_NET) && Serial)
+	{
+		Serial.print(F("log> phpoc_dns: query AAAA "));
+		Serial.print(hostname);
+		Serial.print(F(" >> "));
+	}
+#endif
+
+	len = Phpoc.command(F("dns query AAAA %s %u"), hostname, wait_ms);
+
+	if(len > 0)
+		ip6addr = Phpoc.readIP6();
+	else
+		ip6addr = IN6ADDR_NONE;
+
+#ifdef PF_LOG_NET
+	if((Phpoc.flags & PF_LOG_NET) && Serial)
+	{
+		Serial.print(ip6addr);
+		Serial.println();
+	}
+#endif
+
+	return 16;
 }
 
 void PhpocClass::logFlush(uint8_t id)
@@ -588,6 +645,137 @@ void PhpocClass::logPrint(uint8_t id)
 	}
 }
 
+#define MAX_BEGIN_WAIT 10
+
+int PhpocClass::beginIP4()
+{
+	int wait_count;
+
+#ifdef PF_LOG_NET
+	if((flags & PF_LOG_NET) && Serial)
+		Serial.print(F("log> phpoc_begin: IPv4 "));
+#endif
+
+	wait_count = 0;
+
+	while(!localIP())
+	{
+		if(wait_count >= MAX_BEGIN_WAIT)
+		{
+#ifdef PF_LOG_NET
+			if((flags & PF_LOG_NET) && Serial)
+				Serial.println();
+#endif
+			return 0;
+		}
+
+#ifdef PF_LOG_NET
+		if((flags & PF_LOG_NET) && Serial)
+		{
+			if(!wait_count)
+				Serial.print(F("acquiring IP address ."));
+			else
+				Serial.print('.');
+		}
+#endif
+
+		delay(1000);
+		wait_count++;
+	}
+
+#ifdef PF_LOG_NET
+	if((flags & PF_LOG_NET) && Serial)
+	{
+		Serial.print(localIP());
+		Serial.print(' ');
+		Serial.print(subnetMask());
+		Serial.print(' ');
+		Serial.print(gatewayIP());
+		Serial.print(' ');
+		Serial.print(dnsServerIP());
+		Serial.println();
+	}
+#endif
+
+	return 1;
+}
+
+int PhpocClass::beginIP6()
+{
+	IP6Address ip6addr;
+	int wait_count = 0;
+
+	/* don't call localIP6() before PF_IP6 flag is set */
+	if(command(F("net0 get ipaddr6 0")) >= 0)
+		ip6addr = readIP6();
+
+	if(ip6addr == IN6ADDR_NONE)
+	{
+#ifdef PF_LOG_NET
+		if((flags & PF_LOG_NET) && Serial)
+		{
+			Serial.print(F("log> phpoc_begin: IPv6 not enabled"));
+			Serial.println();
+		}
+#endif
+		return 0;
+	}
+
+	flags |= PF_IP6;
+
+#ifdef PF_LOG_NET
+	if((flags & PF_LOG_NET) && Serial)
+		Serial.print(F("log> phpoc_begin: IPv6 "));
+#endif
+
+	wait_count = 0;
+
+	while(globalIP6() == IN6ADDR_NONE)
+	{
+		if(wait_count >= MAX_BEGIN_WAIT)
+		{
+#ifdef PF_LOG_NET
+			if((flags & PF_LOG_NET) && Serial)
+				Serial.println();
+#endif
+			return 0;
+		}
+
+#ifdef PF_LOG_NET
+		if((flags & PF_LOG_NET) && Serial)
+		{
+			if(!wait_count)
+				Serial.print(F("acquiring global IP address ."));
+			else
+				Serial.print('.');
+		}
+#endif
+
+		delay(1000);
+		wait_count++;
+	}
+
+#ifdef PF_LOG_NET
+	if((flags & PF_LOG_NET) && Serial)
+	{
+		Serial.print(localIP6());
+		Serial.print(' ');
+		Serial.print(globalIP6());
+		Serial.print('/');
+		Serial.print(globalPrefix6());
+		Serial.println();
+
+		Serial.print(F("log> phpoc_begin: IPv6 "));
+		Serial.print(gatewayIP6());
+		Serial.print(' ');
+		Serial.print(dnsServerIP6());
+		Serial.println();
+	}
+#endif
+
+	return 1;
+}
+
 #define MSG_BUF_SIZE 16
 
 int PhpocClass::begin(uint8_t init_flags)
@@ -599,12 +787,14 @@ int PhpocClass::begin(uint8_t init_flags)
 	flags |= init_flags;
 	spi_wait_ms = SPI_WAIT_MS;
 
-	flags |= PF_SHIELD;
-
 	pinMode(SPI_NSS_PIN, OUTPUT);
 	SPI.begin();
 
-	spi_resync();
+	if(!(spi_resync() & SPI_FLAG_SYNC))
+		return 0;
+
+	/* we should set PF_SHIELD flag after spi_resync success */
+	flags |= PF_SHIELD;
 
 #ifdef PF_LOG_NET
 	if((flags & PF_LOG_NET) && Serial)
@@ -612,11 +802,7 @@ int PhpocClass::begin(uint8_t init_flags)
 #endif
 		
 	if(Phpoc.command(F("net1 get mode")) < 0)
-	{
-		/* we should clear PF_SHIELD flag if initial command failed */
-		flags &= ~PF_SHIELD;
 		return 0;
-	}
 	len = Phpoc.read(msg, MSG_BUF_SIZE);
 
 	if(len > 0)
@@ -632,14 +818,25 @@ int PhpocClass::begin(uint8_t init_flags)
 	{ /* WiFi dongle not installed */
 		net_id = 0;
 
-#ifdef PF_LOG_NET
-		if((flags & PF_LOG_NET) && Serial)
-			Serial.print(F("Ethernet "));
-#endif
-
 		if(Phpoc.command(F("net0 get mode")) < 0)
 			return 0;
 		len = Phpoc.read(msg, MSG_BUF_SIZE);
+
+		if(len)
+		{ /* ethernet present */
+#ifdef PF_LOG_NET
+			if((flags & PF_LOG_NET) && Serial)
+				Serial.print(F("Ethernet "));
+#endif
+		}
+		else
+		{ /* ethernet absent */
+#ifdef PF_LOG_NET
+			if((flags & PF_LOG_NET) && Serial)
+				Serial.println(F("WiFi dongle not installed"));
+#endif
+			return 0;
+		}
 	}
 		
 #ifdef PF_LOG_NET
@@ -657,87 +854,40 @@ int PhpocClass::begin(uint8_t init_flags)
 		if(Phpoc.command(F("net%u get speed"), net_id) < 0)
 			return 0;
 
-		if(parseInt() > 0) /* Ethernet plugged, or WiFi associated ? */
+		if(readInt() > 0) /* Ethernet plugged, or WiFi associated ? */
 			break;
 
-		wait_count++;
-
-		if(wait_count > 50)
-		{
-#ifdef PF_LOG_NET
-			if((flags & PF_LOG_NET) && Serial)
-				Serial.println();
-#endif
-			return 0;
-		}
-
-		delay(200);
+		if(wait_count >= MAX_BEGIN_WAIT)
+			break;
 
 #ifdef PF_LOG_NET
 		if((flags & PF_LOG_NET) && Serial)
 		{
-			if(wait_count == 1)
+			if(!wait_count)
 			{
 				if(net_id)
-					Serial.print(F("scanning"));
+					Serial.print(F("scanning ."));
 				else
-					Serial.print(F("unplugged"));
+					Serial.print(F("unplugged ."));
 			}
 			else
 				Serial.print('.');
 		}
 #endif
-	}
 
-	wait_count = 0;
-
-	while(1)
-	{
-		if(localIP()) /* IP address present, or acquired */
-			break;
-
+		delay(1000);
 		wait_count++;
-
-		if(wait_count > 50)
-		{
-#ifdef PF_LOG_NET
-			if((flags & PF_LOG_NET) && Serial)
-				Serial.println();
-#endif
-			return 0;
-		}
-
-		delay(200);
-
-#ifdef PF_LOG_NET
-		if((flags & PF_LOG_NET) && Serial)
-		{
-			if(wait_count == 1)
-				Serial.print(F("acquiring ip address"));
-			else
-				Serial.print('.');
-		}
-#endif
 	}
 
 #ifdef PF_LOG_NET
 	if((flags & PF_LOG_NET) && Serial)
-	{
-		Serial.print(localIP());
-		Serial.print(' ');
-		Serial.print(subnetMask());
-		Serial.print(' ');
-		Serial.print(gatewayIP());
-		Serial.print(' ');
-		Serial.print(dnsServerIP());
 		Serial.println();
-	}
 #endif
 
 	for(sock_id = 0; sock_id < MAX_SOCK_TCP; sock_id++)
 		Phpoc.command(F("tcp%u close"), sock_id);
 
-	return 1;
+	return beginIP4();
 }
 
 int PhpocClass::maintain()
@@ -753,7 +903,7 @@ IPAddress PhpocClass::localIP()
 	if(command(F("net0 get ipaddr")) < 0)
 		return INADDR_NONE;
 
-	return parseIP();
+	return readIP();
 }
 
 IPAddress PhpocClass::subnetMask()
@@ -764,7 +914,7 @@ IPAddress PhpocClass::subnetMask()
 	if(command(F("net0 get netmask")) < 0)
 		return INADDR_NONE;
 
-	return parseIP();
+	return readIP();
 }
 
 IPAddress PhpocClass::gatewayIP()
@@ -775,7 +925,7 @@ IPAddress PhpocClass::gatewayIP()
 	if(command(F("net0 get gwaddr")) < 0)
 		return INADDR_NONE;
 
-	return parseIP();
+	return readIP();
 }
 
 IPAddress PhpocClass::dnsServerIP()
@@ -786,8 +936,62 @@ IPAddress PhpocClass::dnsServerIP()
 	if(command(F("net0 get nsaddr")) < 0)
 		return INADDR_NONE;
 
-	return parseIP();
+	return readIP();
 }
 
+IP6Address PhpocClass::localIP6()
+{
+	if(!(flags & PF_SHIELD) || !(flags & PF_IP6))
+		return IN6ADDR_NONE;
+
+	if(command(F("net0 get ipaddr6 0")) < 0)
+		return IN6ADDR_NONE;
+
+	return readIP6();
+}
+
+IP6Address PhpocClass::globalIP6()
+{
+	if(!(flags & PF_SHIELD) || !(flags & PF_IP6))
+		return IN6ADDR_NONE;
+
+	if(command(F("net0 get ipaddr6 1")) < 0)
+		return IN6ADDR_NONE;
+
+	return readIP6();
+}
+
+IP6Address PhpocClass::gatewayIP6()
+{
+	if(!(flags & PF_SHIELD) || !(flags & PF_IP6))
+		return IN6ADDR_NONE;
+
+	if(command(F("net0 get gwaddr6")) < 0)
+		return IN6ADDR_NONE;
+
+	return readIP6();
+}
+
+IP6Address PhpocClass::dnsServerIP6()
+{
+	if(!(flags & PF_SHIELD) || !(flags & PF_IP6))
+		return IN6ADDR_NONE;
+
+	if(command(F("net0 get nsaddr6")) < 0)
+		return IN6ADDR_NONE;
+
+	return readIP6();
+}
+
+int PhpocClass::globalPrefix6()
+{
+	if(!(flags & PF_SHIELD) || !(flags & PF_IP6))
+		return 0;
+
+	if(command(F("net0 get prefix6")) < 0)
+		return 0;
+
+	return readInt();
+}
 
 PhpocClass Phpoc;

@@ -1,3 +1,5 @@
+/* arduino RTC date & time test */
+
 #include <SPI.h>
 #include <Phpoc.h>
 
@@ -10,7 +12,7 @@ void setup() {
     
   Phpoc.begin();
   
-  Serial.println("Phpoc Time test");
+  Serial.println("Get year/month/day/dayofWeek/hour/minute/second from RTC in PHPoC Shield");
   
   Serial.print(datetime.year());
   Serial.print('-');

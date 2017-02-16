@@ -33,6 +33,7 @@
 #define Phpoc_h
 
 #include <IPAddress.h>
+#include <IP6Address.h>
 #include <PhpocClient.h>
 #include <PhpocServer.h>
 #include <PhpocEmail.h>
@@ -40,9 +41,10 @@
 
 /* PHPoC flags */
 #define PF_SHIELD  0x01 // PHPoC shield installed
-#define PF_LOG_SPI 0x02
-#define PF_LOG_NET 0x04
-#define PF_LOG_APP 0x08
+#define PF_IP6     0x02 // IPv6 enabled
+#define PF_LOG_SPI 0x10
+#define PF_LOG_NET 0x20
+#define PF_LOG_APP 0x40
 
 /* PHPoC shield runtime error */
 #define PE_NO_SHIELD 1
@@ -74,26 +76,33 @@ class PhpocClass
 		int api_write_command(const char *wbuf, int wlen);
 		int api_write_data(const uint8_t *wbuf, int wlen, boolean pgm);
 
-	protected:
+	private:
 		int vsprintf(char *str, const __FlashStringHelper *format, va_list args);
 		int vsprintf(char *str, const char *format, va_list args);
 		IPAddress inet_aton(const char *str);
 
 	public:
+		int sprintf(char *str, const __FlashStringHelper *format, ...);
+		int sprintf(char *str, const char *format, ...);
+
+	public:
 		uint8_t flags;
 		uint16_t spi_wait_ms;
-		/* PHPoC specific public member functions */
 		int command(const __FlashStringHelper *format, ...);
 		int command(const char *format, ...);
 		int write(const __FlashStringHelper *wstr);
 		int write(const char *wstr);
 		int write(const uint8_t *wbuf, size_t wlen);
 		int read(uint8_t *rbuf, size_t rlen);
-		IPAddress parseIP(); /* read & parse IP address */
-		uint16_t parseInt(); /* read & parse integer */
-		IPAddress getHostByName(const char *host, int wait_ms = 2000);
+		uint16_t readInt();
+		IPAddress readIP();
+		IP6Address readIP6();
+		int getHostByName(const char *hostname, IPAddress &ipaddr, int wait_ms = 2000);
+		int getHostByName6(const char *hostname, IP6Address &ip6addr, int wait_ms = 2000);
 		void logFlush(uint8_t id);
 		void logPrint(uint8_t id);
+		int beginIP4();
+		int beginIP6();
 
 	public:
 		/* Arduino Ethernet compatible public member functions */
@@ -103,6 +112,13 @@ class PhpocClass
 		IPAddress subnetMask();
 		IPAddress gatewayIP();
 		IPAddress dnsServerIP();
+
+	public:
+		IP6Address localIP6();  /* IPv6 link local address */
+		IP6Address globalIP6(); /* IPv6 global unicast address */
+		IP6Address gatewayIP6();
+		IP6Address dnsServerIP6();
+		int globalPrefix6();
 };
 
 extern PhpocClass Phpoc;

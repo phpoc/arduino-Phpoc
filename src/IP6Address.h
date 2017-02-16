@@ -29,95 +29,32 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <Phpoc.h>
+#ifndef IP6Address_h
+#define IP6Address_h
 
-char *PhpocDateTime::date(const char *format)
+#include <stdint.h>
+#include "Printable.h"
+#include "WString.h"
+
+class IP6Address : public Printable
 {
-	int len;
+	private:
+		uint16_t addr_hex16[8];
+		static char ip6str_buf[40]; /* xxxx:......:xxxx (max 39bytes) */
 
-	if(format && format[0])
-	{
-		if(Phpoc.command(F("sys date format")) >= 0)
-			Phpoc.write(format);
-	}
+	public:
+		IP6Address();
+    IP6Address(const char *str);
 
-	if(Phpoc.command(F("sys date")) > 0)
-	{
-		if((len = Phpoc.read((uint8_t *)date_buf, DATE_BUF_SIZE - 1)) >= 0)
-			date_buf[len] = 0x00;
-		else
-			date_buf[0] = 0x00;
-	}
-	else
-		date_buf[0] = 0x00;
+    bool fromString(const char *str);
+    char *toString(void);
+		bool operator==(const IP6Address &);
+		bool operator!=(const IP6Address &);
+		virtual size_t printTo(Print &) const;
 
-	return date_buf;
-}
+		friend class PhpocClass;
+};
 
-char *PhpocDateTime::date(const __FlashStringHelper *format)
-{
-	if(format && pgm_read_byte(0))
-	{
-		if(Phpoc.command(F("sys date format")) >= 0)
-			Phpoc.write(format);
-	}
+const IP6Address IN6ADDR_NONE("::0");
 
-	return date();
-}
-
-uint8_t PhpocDateTime::hour()
-{
-	if(Phpoc.command(F("sys rtc get hour")) > 0)
-		return Phpoc.readInt();
-	else
-		return 0;
-}
-
-uint8_t PhpocDateTime::minute()
-{
-	if(Phpoc.command(F("sys rtc get minute")) > 0)
-		return Phpoc.readInt();
-	else
-		return 0;
-}
-
-uint8_t PhpocDateTime::second()
-{
-	if(Phpoc.command(F("sys rtc get second")) > 0)
-		return Phpoc.readInt();
-	else
-		return 0;
-}
-
-uint8_t PhpocDateTime::day()
-{
-	if(Phpoc.command(F("sys rtc get day")) > 0)
-		return Phpoc.readInt();
-	else
-		return 0;
-}
-
-uint8_t PhpocDateTime::dayofWeek()
-{
-	if(Phpoc.command(F("sys rtc get wday")) > 0)
-		return Phpoc.readInt();
-	else
-		return 0;
-}
-
-uint8_t PhpocDateTime::month()
-{
-	if(Phpoc.command(F("sys rtc get month")) > 0)
-		return Phpoc.readInt();
-	else
-		return 0;
-}
-
-uint16_t PhpocDateTime::year()
-{
-	if(Phpoc.command(F("sys rtc get year")) > 0)
-		return Phpoc.readInt();
-	else
-		return 0;
-}
-
+#endif

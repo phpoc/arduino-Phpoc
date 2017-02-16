@@ -43,8 +43,8 @@ class PhpocEmail : public Print
 		uint8_t write_cache_buf[WRITE_CACHE_SIZE];
 
 	public:
-		void setOutgoingServer(const char *host, uint16_t port);
-		void setOutgoingServer(const __FlashStringHelper *host, uint16_t port);
+		void setOutgoingServer(const char *host, uint16_t port = 587);
+		void setOutgoingServer(const __FlashStringHelper *host, uint16_t port = 587);
 		void setOutgoingLogin(const char *username, const char *password);
 		void setOutgoingLogin(const __FlashStringHelper *username, const __FlashStringHelper *password);
 		void setFrom(const char *email, const char *name = NULL);

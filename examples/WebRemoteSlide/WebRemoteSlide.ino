@@ -1,3 +1,5 @@
+/* arduino web server - remote control (slide switch) */
+
 #include "SPI.h"
 #include "Phpoc.h"
 

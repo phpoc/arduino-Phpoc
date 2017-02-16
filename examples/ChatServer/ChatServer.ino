@@ -1,3 +1,5 @@
+/* arduino chat server - 4 listening sessions */
+
 #include <SPI.h>
 #include <Phpoc.h>
 
@@ -8,7 +10,7 @@ void setup() {
   Serial.begin(9600);
   while(!Serial)
     ;
-    
+
   Phpoc.begin(PF_LOG_SPI | PF_LOG_NET);
   //Phpoc.begin();
 

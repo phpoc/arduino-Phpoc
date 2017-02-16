@@ -1,25 +1,30 @@
-/* arduino SSH server - 1 listening session */
+/* arduino IPv4 & IPv6 dual stack chat server - 4 listening sessions */
 
-#include "SPI.h"
-#include "Phpoc.h"
+#include <SPI.h>
+#include <Phpoc.h>
 
-PhpocServer server(22);
+PhpocServer server(23);
 boolean alreadyConnected = false; // whether or not the client was connected previously
 
 void setup() {
   Serial.begin(9600);
   while(!Serial)
     ;
-    
+
   Phpoc.begin(PF_LOG_SPI | PF_LOG_NET);
   //Phpoc.begin();
 
-  server.beginSSH("root", "1234");
-  //server.beginSSH("", "");
-  //server.beginSSH();
+  Phpoc.beginIP6();
 
-  Serial.print("SSH server address : ");
-  Serial.println(Phpoc.localIP());  
+  server.begin();
+
+  Serial.print("Chat server address : ");
+  Serial.print(Phpoc.localIP());  
+  Serial.print(' ');
+  Serial.print(Phpoc.localIP6());  
+  Serial.print(' ');
+  Serial.print(Phpoc.globalIP6());  
+  Serial.println();
 }
 
 void loop() {

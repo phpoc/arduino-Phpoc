@@ -11,16 +11,21 @@ PhpocClient	KEYWORD1
 PhpocServer	KEYWORD1
 PhpocEmail	KEYWORD1
 PhpocDateTime	KEYWORD1
+IP6Address	KEYWORD1
 
 #######################################
 # Methods and Functions (KEYWORD2)
 #######################################
 
 begin	KEYWORD2
+localIP	KEYWORD2
+localIP6	KEYWORD2
+globalIP6	KEYWORD2
 beginTelnet	KEYWORD2
 beginWebSocket	KEYWORD2
 beginSSL	KEYWORD2
 beginSSH	KEYWORD2
+beginIP6	KEYWORD2
 connect	KEYWORD2
 connectSSL	KEYWORD2
 connected	KEYWORD2

@@ -75,7 +75,7 @@ void PhpocClient::update_cache(uint8_t id)
 			if(Phpoc.command(F("tcp%u get rxlen"), id) <= 0)
 				rxlen_32ms[id] = 0;
 			else
-				rxlen_32ms[id] = Phpoc.parseInt();
+				rxlen_32ms[id] = Phpoc.readInt();
 		}
 	}
 
@@ -92,33 +92,18 @@ void PhpocClient::update_cache(uint8_t id)
 	if(Phpoc.command(F("tcp%u get state"), id) <= 0)
 		state_32ms[id] = 0;
 	else
-		state_32ms[id] = Phpoc.parseInt();
+		state_32ms[id] = Phpoc.readInt();
 
 	if(Phpoc.command(F("tcp%u get rxlen"), id) <= 0)
 		rxlen_32ms[id] = 0;
 	else
-		rxlen_32ms[id] = Phpoc.parseInt();
+		rxlen_32ms[id] = Phpoc.readInt();
 
 	tick_32ms[id] = millis() & 0xffffffe0;
 }
 #endif
 
-int PhpocClient::connectSSL(const char *host, uint16_t port)
-{
-	IPAddress ip;
-	int len;
-
-	ip = Phpoc.getHostByName(host, 500);
-	if(!ip)
-		ip = Phpoc.getHostByName(host, 2000);
-
-	if(ip)
-		return connectSSL(ip, port);
-	else
-		return 0;
-}
-
-int PhpocClient::connectSSL(IPAddress ip, uint16_t port)
+int PhpocClient::connectSSL_ipstr(const char *ipstr, uint16_t port)
 {
 	uint8_t state;
 
@@ -126,7 +111,7 @@ int PhpocClient::connectSSL(IPAddress ip, uint16_t port)
 
 	if(Phpoc.command(F("tcp%u get state"), sock_id) > 0)
 	{
-		if(Phpoc.parseInt() == TCP_CLOSED)
+		if(Phpoc.readInt() == TCP_CLOSED)
 		{
 #ifdef INCLUDE_PHPOC_CACHE
 			if(read_cache_len[sock_id])
@@ -136,7 +121,7 @@ int PhpocClient::connectSSL(IPAddress ip, uint16_t port)
 			if(Phpoc.command(F("tcp%u get rxlen"), sock_id) <= 0)
 				goto _sock_na;
 
-			if(Phpoc.parseInt())
+			if(Phpoc.readInt())
 				goto _sock_na;
 		}
 		else
@@ -157,7 +142,7 @@ _sock_na:
 		Serial.print(F("log> phpoc_client: connectSSL >> "));
 #endif
 
-	if(Phpoc.command(F("tcp%u connect %u.%u.%u.%u %u"), sock_id, ip[0], ip[1], ip[2], ip[3], port) < 0)
+	if(Phpoc.command(F("tcp%u connect %s %u"), sock_id, ipstr, port) < 0)
 		return 0;
 
 	if(Phpoc.command(F("tcp%u set ssl method tls1_client"), sock_id) < 0)
@@ -171,7 +156,7 @@ _sock_na:
 			break;
 		}
 
-		state = Phpoc.parseInt();
+		state = Phpoc.readInt();
 
 		if((state == TCP_CLOSED) || (state == SSL_CONNECTED))
 			break;
@@ -216,22 +201,53 @@ _sock_na:
 #endif
 }
 
-int PhpocClient::connect(const char *host, uint16_t port)
+int PhpocClient::connectSSL(IP6Address ip6addr, uint16_t port)
 {
-	IPAddress ip;
-	int len;
-
-	ip = Phpoc.getHostByName(host, 500);
-	if(!ip)
-		ip = Phpoc.getHostByName(host, 2000);
-
-	if(ip)
-		return connect(ip, port);
-	else
-		return 0;
+	return connectSSL_ipstr(ip6addr.toString(), port);
 }
 
-int PhpocClient::connect(IPAddress ip, uint16_t port)
+int PhpocClient::connectSSL(IPAddress ipaddr, uint16_t port)
+{
+	char ipstr[16]; /* x.x.x.x (7 bytes), xxx.xxx.xxx.xxx (15 bytes) */
+
+	Phpoc.sprintf(ipstr, F("%u.%u.%u.%u"), ipaddr[0], ipaddr[1], ipaddr[2], ipaddr[3]);
+	return connectSSL_ipstr(ipstr, port);
+}
+
+int PhpocClient::connectSSL(const char *host, uint16_t port)
+{
+	int len;
+
+	if(Phpoc.flags & PF_IP6)
+	{
+		IP6Address ip6addr;
+
+		Phpoc.getHostByName6(host, ip6addr, 500);
+		if(ip6addr == IN6ADDR_NONE)
+			Phpoc.getHostByName6(host, ip6addr, 2000);
+
+		if(ip6addr != IN6ADDR_NONE)
+			return connectSSL(ip6addr, port);
+		else
+			return 0;
+	}
+	else
+	{
+		IPAddress ipaddr;
+
+		Phpoc.getHostByName(host, ipaddr, 500);
+		if(ipaddr == INADDR_NONE)
+			Phpoc.getHostByName(host, ipaddr, 2000);
+
+		if(ipaddr != INADDR_NONE)
+			return connectSSL(ipaddr, port);
+		else
+			return 0;
+	}
+
+}
+
+int PhpocClient::connect_ipstr(const char *ipstr, uint16_t port)
 {
 	uint8_t state;
 
@@ -242,7 +258,7 @@ int PhpocClient::connect(IPAddress ip, uint16_t port)
 	{
 		if(Phpoc.command(F("tcp%u get state"), sock_id) > 0)
 		{
-			state = Phpoc.parseInt();
+			state = Phpoc.readInt();
 
 			if(state == TCP_CLOSED)
 			{
@@ -254,7 +270,7 @@ int PhpocClient::connect(IPAddress ip, uint16_t port)
 				if(Phpoc.command(F("tcp%u get rxlen"), sock_id) <= 0)
 					continue;
 
-				if(Phpoc.parseInt())
+				if(Phpoc.readInt())
 					continue;
 
 				break;
@@ -283,7 +299,7 @@ int PhpocClient::connect(IPAddress ip, uint16_t port)
 	if(Phpoc.command(F("tcp%u set api tcp"), sock_id) < 0)
 		return 0;
 
-	if(Phpoc.command(F("tcp%u connect %u.%u.%u.%u %u"), sock_id, ip[0], ip[1], ip[2], ip[3], port) < 0)
+	if(Phpoc.command(F("tcp%u connect %s %u"), sock_id, ipstr, port) < 0)
 		return 0;
 
 	while(1)
@@ -294,7 +310,7 @@ int PhpocClient::connect(IPAddress ip, uint16_t port)
 			break;
 		}
 
-		state = Phpoc.parseInt();
+		state = Phpoc.readInt();
 
 		if((state == TCP_CLOSED) || (state == TCP_CONNECTED))
 			break;
@@ -337,6 +353,51 @@ int PhpocClient::connect(IPAddress ip, uint16_t port)
 		return 0;
 	}
 #endif
+}
+
+int PhpocClient::connect(IP6Address ip6addr, uint16_t port)
+{
+		return connect_ipstr(ip6addr.toString(), port);
+}
+
+int PhpocClient::connect(IPAddress ipaddr, uint16_t port)
+{
+	char ipstr[16]; /* x.x.x.x (7 bytes), xxx.xxx.xxx.xxx (15 bytes) */
+
+	Phpoc.sprintf(ipstr, F("%u.%u.%u.%u"), ipaddr[0], ipaddr[1], ipaddr[2], ipaddr[3]);
+	return connect_ipstr(ipstr, port);
+}
+
+int PhpocClient::connect(const char *host, uint16_t port)
+{
+	int len;
+
+	if(Phpoc.flags & PF_IP6)
+	{
+		IP6Address ip6addr;
+
+		Phpoc.getHostByName6(host, ip6addr, 500);
+		if(ip6addr == IN6ADDR_NONE)
+			Phpoc.getHostByName6(host, ip6addr, 2000);
+
+		if(ip6addr != IN6ADDR_NONE)
+			return connect(ip6addr, port);
+		else
+			return 0;
+	}
+	else
+	{
+		IPAddress ipaddr;
+
+		Phpoc.getHostByName(host, ipaddr, 500);
+		if(ipaddr == INADDR_NONE)
+			Phpoc.getHostByName(host, ipaddr, 2000);
+
+		if(ipaddr != INADDR_NONE)
+			return connect(ipaddr, port);
+		else
+			return 0;
+	}
 }
 
 size_t PhpocClient::write(uint8_t byte)
@@ -399,7 +460,7 @@ int PhpocClient::available()
 	if(Phpoc.command(F("tcp%u get rxlen"), sock_id) <= 0)
 		return 0;
 
-	len = Phpoc.parseInt();
+	len = Phpoc.readInt();
 	return len;
 #endif
 }
@@ -484,7 +545,7 @@ int PhpocClient::read(uint8_t *buf, size_t size)
 		if(Phpoc.command(F("tcp%u get rxlen"), sock_id) <= 0)
 			rxlen_32ms[sock_id] = 0;
 		else
-			rxlen_32ms[sock_id] = Phpoc.parseInt();
+			rxlen_32ms[sock_id] = Phpoc.readInt();
 	}
 
 	update_cache(sock_id);
@@ -614,7 +675,7 @@ int PhpocClient::readLine(uint8_t *buf, size_t size)
 			if(Phpoc.command(F("tcp%u get rxlen"), sock_id) <= 0)
 				rxlen_32ms[sock_id] = 0;
 			else
-				rxlen_32ms[sock_id] = Phpoc.parseInt();
+				rxlen_32ms[sock_id] = Phpoc.readInt();
 
 			line_len = read_line_from_cache(buf, size);
 
@@ -642,7 +703,7 @@ _flush_cache:
 	if(Phpoc.command(F("tcp%u get rxlen 0d0a"), sock_id) <= 0)
 		return 0;
 
-	line_len = Phpoc.parseInt();
+	line_len = Phpoc.readInt();
 
 	if(line_len)
 	{
@@ -705,7 +766,7 @@ void PhpocClient::flush()
 	{
 		if(Phpoc.command(F("tcp%u get txlen"), sock_id) <= 0)
 			break;
-		if(!Phpoc.parseInt())
+		if(!Phpoc.readInt())
 			break;
 	}
 }
@@ -732,7 +793,7 @@ void PhpocClient::stop()
 		if(Phpoc.command(F("tcp%u get state"), sock_id) <= 0)
 			break;
 
-		if(Phpoc.parseInt() == TCP_CLOSED)
+		if(Phpoc.readInt() == TCP_CLOSED)
 			break;
 
 		delay(10);
@@ -777,7 +838,7 @@ uint8_t PhpocClient::connected()
 #else
 	if(Phpoc.command(F("tcp%u get state"), sock_id) <= 0)
 		return false;
-	state = Phpoc.parseInt();
+	state = Phpoc.readInt();
 
 	if((state == TCP_CONNECTED) || (state == SSL_CONNECTED) || (state == SSH_CONNECTED))
 		return true;

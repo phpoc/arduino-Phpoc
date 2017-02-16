@@ -56,7 +56,7 @@ void PhpocServer::session_loop_tcp()
 			state = client.state_32ms[sock_id];
 #else
 			if(Phpoc.command(F("tcp%u get state"), sock_id) > 0)
-				state = Phpoc.parseInt();
+				state = Phpoc.readInt();
 			else
 				continue;
 #endif
@@ -86,7 +86,7 @@ void PhpocServer::session_loop_tcp()
 		state = PhpocClient::state_32ms[sock_id];
 #else
 		if(Phpoc.command(F("tcp%u get state"), sock_id) > 0)
-			state = Phpoc.parseInt();
+			state = Phpoc.readInt();
 		else
 			continue;
 #endif
@@ -160,7 +160,7 @@ void PhpocServer::session_loop_ssl()
 	state = client.state_32ms[sock_id];
 #else
 	if(Phpoc.command(F("tcp%u get state"), sock_id) > 0)
-		state = Phpoc.parseInt();
+		state = Phpoc.readInt();
 	else
 		return;
 #endif
@@ -225,7 +225,7 @@ void PhpocServer::session_loop_ssh()
 	state = client.state_32ms[sock_id];
 #else
 	if(Phpoc.command(F("tcp%u get state"), sock_id) > 0)
-		state = Phpoc.parseInt();
+		state = Phpoc.readInt();
 	else
 		return;
 #endif
@@ -448,7 +448,7 @@ size_t PhpocServer::write(const uint8_t *buf, size_t size)
 					state = PhpocClient::state_32ms[sock_id];
 #else
 					if(Phpoc.command(F("tcp%u get state"), sock_id) > 0)
-						state = Phpoc.parseInt();
+						state = Phpoc.readInt();
 					else
 						continue;
 #endif
@@ -468,7 +468,7 @@ size_t PhpocServer::write(const uint8_t *buf, size_t size)
 			state = PhpocClient::state_32ms[SOCK_ID_SSL];
 #else
 			if(Phpoc.command(F("tcp%u get state"), SOCK_ID_SSL) > 0)
-				state = Phpoc.parseInt();
+				state = Phpoc.readInt();
 			else
 				break;
 #endif
@@ -487,7 +487,7 @@ size_t PhpocServer::write(const uint8_t *buf, size_t size)
 			state = PhpocClient::state_32ms[SOCK_ID_SSH];
 #else
 			if(Phpoc.command(F("tcp%u get state"), SOCK_ID_SSH) > 0)
-				state = Phpoc.parseInt();
+				state = Phpoc.readInt();
 			else
 				break;
 #endif

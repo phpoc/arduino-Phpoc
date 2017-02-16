@@ -54,7 +54,6 @@ class PhpocServer : public Server
 		void session_loop_ssh();
 
 	public:
-		/* PHPoC specific public member functions */
 		void beginTelnet();
 		void beginWebSocket(const char *path = NULL);
 		void beginSSL();

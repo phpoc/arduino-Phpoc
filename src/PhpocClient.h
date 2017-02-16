@@ -88,10 +88,12 @@ class PhpocClient : public Client
 	private:
 		uint8_t sock_id;
 		int read_line_from_cache(uint8_t *buf, size_t size);
+		int connectSSL_ipstr(const char *ipstr, uint16_t port);
+		int connect_ipstr(const char *ipstr, uint16_t port);
 
 	public:
-		/* PHPoC specific public member functions */
-		int connectSSL(IPAddress ip, uint16_t port);
+		int connectSSL(IP6Address ip6addr, uint16_t port);
+		int connectSSL(IPAddress ipaddr, uint16_t port);
 		int connectSSL(const char *host, uint16_t port);
 		char *readLine();
 		int readLine(uint8_t *buf, size_t size);
@@ -100,7 +102,8 @@ class PhpocClient : public Client
 		/* Arduino EthernetClient compatible public member functions */
 		PhpocClient();
 		PhpocClient(uint8_t id);
-		virtual int connect(IPAddress ip, uint16_t port);
+		int connect(IP6Address ip6addr, uint16_t port);
+		virtual int connect(IPAddress ipaddr, uint16_t port);
 		virtual int connect(const char *host, uint16_t port);
 		virtual size_t write(uint8_t byte);
 		virtual size_t write(const uint8_t *buf, size_t size);

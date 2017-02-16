@@ -1,9 +1,9 @@
-/* arduino SSL web client - GET reqeust for arduino ascii logo */
+/* arduino SSL IPv6 web client - GET request for index.html or index.php */
 
 #include "SPI.h"
 #include "Phpoc.h"
 
-char server[] = "www.arduino.cc";
+char server[] = "ipv6.google.com";
 
 PhpocClient client;
 
@@ -12,17 +12,17 @@ void setup() {
   while(!Serial)
   ;
 
-  Serial.println("Sending GET request to SSL web server");
+  Serial.println("Sending GET request to SSL IPv6 web server");
 
   Phpoc.begin(PF_LOG_SPI | PF_LOG_NET);
   //Phpoc.begin();
 
+  Phpoc.beginIP6();
+
   if(client.connectSSL(server, 443)) {
     Serial.println("Connected to server");
     // Make a HTTP request:
-    client.println("GET /asciilogo.txt HTTP/1.1");
-    client.println("Host: www.arduino.cc");
-    client.println("Connection: close");
+    client.println("GET / HTTP/1.0");
     client.println();
     Serial.println("Request sent");
   }
