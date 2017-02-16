@@ -1,0 +1,58 @@
+#######################################
+# Syntax Coloring Map For PHPoC
+#######################################
+
+#######################################
+# Datatypes (KEYWORD1)
+#######################################
+
+Phpoc	KEYWORD1
+PhpocClient	KEYWORD1
+PhpocServer	KEYWORD1
+PhpocEmail	KEYWORD1
+PhpocDateTime	KEYWORD1
+
+#######################################
+# Methods and Functions (KEYWORD2)
+#######################################
+
+begin	KEYWORD2
+beginTelnet	KEYWORD2
+beginWebSocket	KEYWORD2
+beginSSL	KEYWORD2
+beginSSH	KEYWORD2
+connect	KEYWORD2
+connectSSL	KEYWORD2
+connected	KEYWORD2
+available	KEYWORD2
+read	KEYWORD2
+readLine	KEYWORD2
+peek	KEYWORD2
+write	KEYWORD2
+flush	KEYWORD2
+stop	KEYWORD2
+command	KEYWORD2
+setOutgoingServer	KEYWORD2
+setOutgoingLogin	KEYWORD2
+setFrom	KEYWORD2
+setTo	KEYWORD2
+setSubject	KEYWORD2
+beginMessage	KEYWORD2
+endMessage	KEYWORD2
+send	KEYWORD2
+date	KEYWORD2
+hour	KEYWORD2
+minute	KEYWORD2
+second	KEYWORD2
+day	KEYWORD2
+dayofWeek	KEYWORD2
+month	KEYWORD2
+year	KEYWORD2
+
+#######################################
+# Constants (LITERAL1)
+#######################################
+
+PF_LOG_SPI	LITERAL1
+PF_LOG_NET	LITERAL1
+PF_LOG_APP	LITERAL1
