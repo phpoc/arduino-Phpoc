@@ -796,6 +796,46 @@ int PhpocClass::begin(uint8_t init_flags)
 	/* we should set PF_SHIELD flag after spi_resync success */
 	flags |= PF_SHIELD;
 
+	if(Phpoc.command(F("sys pkg ver")) > 0)
+	{
+		char *ver;
+
+		len = Phpoc.read(msg, MSG_BUF_SIZE);
+		msg[len] = 0x00;
+
+		ver = (char *)msg;
+		pkg_ver_id = 0;
+
+		for(int i = 0; i < 3; i++)
+		{
+			if(i == 0)
+				pkg_ver_id += atoi_u16(ver) * 10000;
+			else
+			if(i == 1)
+				pkg_ver_id += atoi_u16(ver) * 100;
+			else
+				pkg_ver_id += atoi_u16(ver);
+
+			while(*ver && (*ver != '.'))
+				ver++;
+			if(ver)
+				ver++;
+		}
+
+#ifdef PF_LOG_NET
+		if((flags & PF_LOG_NET) && Serial)
+		{
+			Serial.print(F("log> phpoc_begin: "));
+			Serial.print(F("shield package version "));
+			Serial.write(msg, len);
+			Serial.print(' ');
+			Serial.println();
+		}
+#endif
+	}
+	else
+		pkg_ver_id = 10000;
+
 #ifdef PF_LOG_NET
 	if((flags & PF_LOG_NET) && Serial)
 		Serial.print(F("log> phpoc_begin: "));
@@ -811,7 +851,31 @@ int PhpocClass::begin(uint8_t init_flags)
 
 #ifdef PF_LOG_NET
 		if((flags & PF_LOG_NET) && Serial)
+		{
 			Serial.print(F("WiFi "));
+
+			Serial.write(msg, len);
+			Serial.print(' ');
+
+			if(pkg_ver_id > 10000)
+			{
+				if(Phpoc.command(F("net1 get ssid")) > 0)
+				{
+					len = Phpoc.read(msg, MSG_BUF_SIZE);
+					Serial.write(msg, len);
+					Serial.print(' ');
+				}
+
+				if(Phpoc.command(F("net1 get ch")) > 0)
+				{
+					Serial.print(F("ch"));
+
+					len = Phpoc.read(msg, MSG_BUF_SIZE);
+					Serial.write(msg, len);
+					Serial.print(' ');
+				}
+			}
+		}
 #endif
 	}
 	else
@@ -826,7 +890,12 @@ int PhpocClass::begin(uint8_t init_flags)
 		{ /* ethernet present */
 #ifdef PF_LOG_NET
 			if((flags & PF_LOG_NET) && Serial)
+			{
 				Serial.print(F("Ethernet "));
+
+				Serial.write(msg, len);
+				Serial.print(' ');
+			}
 #endif
 		}
 		else
@@ -839,14 +908,6 @@ int PhpocClass::begin(uint8_t init_flags)
 		}
 	}
 		
-#ifdef PF_LOG_NET
-	if((flags & PF_LOG_NET) && Serial)
-	{
-		Serial.write(msg, len);
-		Serial.print(' ');
-	}
-#endif
-
 	wait_count = 0;
 
 	while(1)

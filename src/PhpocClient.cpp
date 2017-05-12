@@ -109,6 +109,14 @@ int PhpocClient::connectSSL_ipstr(const char *ipstr, uint16_t port)
 
 	sock_id = SOCK_ID_SSL;
 
+	/* - crypto computation time
+	 *   2048bit RSA public key op  : 16ms  (client_key_exchange)
+	 *   2048bit RSA private key op : 404ms (certificate_verify)
+	 * - spi_wait time should be longer than crypto computation time.
+	 * - if debug_ssl is ON & fdc0_txbuf_size is 0, spi_wait_ms should be set 700
+	 */
+	Phpoc.spi_wait_ms = 600; /* 0.6 second */
+
 	if(Phpoc.command(F("tcp%u get state"), sock_id) > 0)
 	{
 		if(Phpoc.readInt() == TCP_CLOSED)

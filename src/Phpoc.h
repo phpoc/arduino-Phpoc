@@ -88,6 +88,7 @@ class PhpocClass
 	public:
 		uint8_t flags;
 		uint16_t spi_wait_ms;
+		uint16_t pkg_ver_id;
 		int command(const __FlashStringHelper *format, ...);
 		int command(const char *format, ...);
 		int write(const __FlashStringHelper *wstr);
