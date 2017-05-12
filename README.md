@@ -20,5 +20,3 @@ Available Examples
 References
 ----------------------------
 * [PHPoC (WiFi) Shield for Arduino Library Reference](http://www.phpoc.com/support/manual/phpoc_shield_for_arduino_library_reference/)
-
-Arduino Library 11
