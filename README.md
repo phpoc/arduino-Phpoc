@@ -7,6 +7,7 @@ Available Examples
 * ChatServerIPv6
 * DateTime
 * EmailClient
+* GmailClient
 * SSHServer
 * SSLServer
 * TelnetServer
