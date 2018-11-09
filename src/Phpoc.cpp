@@ -32,19 +32,17 @@
 /* API command & data
  *   0                 1                2                3                4
  *  +--------+--------+----------------+----------------+----------------+---------------
- *  | D 0 0 C|len8..11|    len 0..7    |             csum/crc            | cmd or data...
+ *  | D 0 0 0|len8..11|    len 0..7    |             csum/crc            | cmd or data...
  *  +--------+--------+----------------+----------------+----------------+---------------
  *  - D : 0 - command, 1 - data
- *  - C : csum/crc select (0 - checksum, 1 - crc)
  *  - len0..11 : command/data length excluding header
  *
  * API response
  *   0                 1                2                3                4
  *  +--------+--------+----------------+----------------+----------------+--------
- *  | 1 0 N C|len8..11|    len 0..7    |             csum/crc            | data...
+ *  | 1 0 N 0|len8..11|    len 0..7    |             csum/crc            | data...
  *  +--------+--------+----------------+----------------+----------------+--------
  *  - N : command NAK
- *  - C : csum/crc select (0 - checksum, 1 - crc)
  *  - len0..11 : response data length excluding header
  *
  * command NAK response data
@@ -54,93 +52,73 @@
  *  - command wait
  *    . response data : "Wnnn"
  *    . nnn : wait time in second ("000" ~ "999")
- *
- * csum/crc
- *  - csum : 1's complement sum
- *  - crc : CRC16-CCITT
- *  - zero(0x0000) csum means "csum not computed"
- *  - if csum computed is 0xffff, csum field should be set 0xffff, not 0x0000
- *  - crc : CRC16-CCITT(init - 0x1d0f, divisor - 0x1021)
- *  - set csum to zero(0x0000) before computing csum
- *  - set crc to zero(0x0000) before testing or computing crc
  */
 
 #include <SPI.h>
 #include <Phpoc.h>
 
-#define SPI_FLAG_TXB  0x1000 /* data is in tx buffer */
-#define SPI_FLAG_RXB  0x2000 /* data is in rx buffer */
-#define SPI_FLAG_SYNC 0x8000 /* SPI SYNC ok */
-#define SPI_FLAG_SBZ  0x4fff /* should be zero */
+/* last measured V1 command time : 4~7ms */
+//#define MEASURE_COMMAND_TIME
+
+#define SYNC_MAGIC_V1 0x5a3c
+
+#define S2M_FLAG_SYNC 0x8000 /* SPI SYNC ok */
+#define S2M_FLAG_RXB  0x2000 /* data is in rx buffer */
+#define S2M_FLAG_TXB  0x1000 /* data is in tx buffer */
+#define S2M_FLAG_SBZ  0x4fff
 
 #define API_FLAG_DATA  0x80 /* 0 - command, 1 - data */
 #define API_FLAG_NAK   0x20 /* 0 - command ok, 1 - command error/wait */
-#define API_FLAG_CRC   0x10 /* 0 - 1's complement sum, 1 - CRC16-CCITT */
 
 #define SPI_NSS_PIN 10
-#define SPI_WAIT_MS 200 /* 0.2 second */
 
-static const SPISettings SPI_PHPOC_SETTINGS(1000000, MSBFIRST, SPI_MODE3);
+/* - crypto computation time
+ *   2048bit RSA public key op  : 16ms
+ *   1024bit RSA private key op : 75ms
+ *   2048bit RSA private key op : 404ms
+ *   DH new key : 270ms
+ *   DH new key + 2048bit RSA private key op : 700ms ?
+ * - SPI_WAIT_MS time should be longer than crypto computation time.
+ * - SSL : if debug_ssl is ON & fdc0_txbuf_size is 0, SPI_WAIT_MS should be set 700ms
+ * - SSH : recommended SPI_WAIT_MS is 900ms
+ */
+#define SPI_WAIT_MS 1000 /* 1 second */
 
-/* atoi_u16() doesn't support negative value */
+#ifdef INCLUDE_LIB_V1
 
-static uint16_t atoi_u16(const char *nptr)
+uint16_t PhpocClass::spi_cmd_status(void)
 {
-	uint16_t u16;
-
-	u16 = 0;
-
-	while(isdigit(*nptr))
-	{
-		u16 *= 10;
-		u16 += (*nptr - '0');
-		nptr++;
-	}
-
-	return u16;
+	return Sppc.spi_request(0x0000);
 }
 
-uint16_t PhpocClass::spi_request(int req)
+uint16_t PhpocClass::spi_cmd_sync(void)
 {
-	uint16_t resp;
-
-	SPI.beginTransaction(SPI_PHPOC_SETTINGS);
-	digitalWrite(SPI_NSS_PIN, LOW);
-
-	SPI.transfer(req >> 8);
-	SPI.transfer(req & 0xff);
-	resp  = SPI.transfer(0x00) << 8;
-	resp |= SPI.transfer(0x00);
-
-	digitalWrite(SPI_NSS_PIN, HIGH);
-	SPI.endTransaction();
-
-	return resp;
+	return Sppc.spi_request(SYNC_MAGIC_V1);
 }
 
-uint16_t PhpocClass::spi_resync()
+uint16_t PhpocClass::spi_resync(void)
 {
 	uint16_t status;
 
 	status = spi_cmd_status();
 
-	if(!(status & SPI_FLAG_SYNC) || (status & SPI_FLAG_SBZ))
+	if(!(status & S2M_FLAG_SYNC) || (status & S2M_FLAG_SBZ))
 	{
 #ifdef PF_LOG_SPI
-		if((flags & PF_LOG_SPI) && Serial)
-			Serial.print(F("log> phpoc_spi: resync spi channel..."));
+		if((Sppc.flags & PF_LOG_SPI) && Serial)
+			Serial.print(F("log> phpoc_spi: resync spi channel v1 ... "));
 #endif
 
-		delay(100);          /* wait TIMEOUT reset */
-		spi_request(0xf000); /* issue BAD_CMD reset */
-		delay(1);
+		Sppc.spi_request(0xf000); /* issue BAD_CMD reset */
+		delay(105);          /* wait BAD_CMD or TIMEOUT reset */
+
 		spi_cmd_sync();
 		status = spi_cmd_status();
 
-		if(!(status & SPI_FLAG_SYNC) || (status & SPI_FLAG_SBZ))
+		if(!(status & S2M_FLAG_SYNC) || (status & S2M_FLAG_SBZ))
 		{
 #ifdef PF_LOG_SPI
-			if((flags & PF_LOG_SPI) && Serial)
+			if((Sppc.flags & PF_LOG_SPI) && Serial)
 				Serial.println(F("failed"));
 #endif
 			return 0x0000;
@@ -148,13 +126,23 @@ uint16_t PhpocClass::spi_resync()
 		else
 		{
 #ifdef PF_LOG_SPI
-			if((flags & PF_LOG_SPI) && Serial)
+			if((Sppc.flags & PF_LOG_SPI) && Serial)
 				Serial.println(F("success"));
 #endif
 		}
 	}
 
 	return status;
+}
+
+int PhpocClass::spi_cmd_txlen(void)
+{
+	return Sppc.spi_request(0x1000) & 0x0fff;
+}
+
+int PhpocClass::spi_cmd_rxfree(void)
+{
+	return Sppc.spi_request(0x2000) & 0x0fff;
 }
 
 int PhpocClass::spi_wait(int len, int ms)
@@ -172,327 +160,412 @@ int PhpocClass::spi_wait(int len, int ms)
 		return 1;
 }
 
-int PhpocClass::spi_cmd_status()
-{
-	return spi_request(0x0000);
-}
-
-int PhpocClass::spi_cmd_txlen()
-{
-	return spi_request(0x1000) & 0x0fff;
-}
-
-int PhpocClass::spi_cmd_rxbuf()
-{
-	return spi_request(0x2000) & 0x0fff;
-}
-
-int PhpocClass::spi_cmd_sync()
-{
-	return spi_request(0x5a3c);
-}
-
-int PhpocClass::spi_cmd_read(uint8_t *rbuf, size_t rlen)
-{
-	uint16_t req, resp;
-	int count;
-
-	req = 0x3000 | rlen;
-
-	SPI.beginTransaction(SPI_PHPOC_SETTINGS);
-	digitalWrite(SPI_NSS_PIN, LOW);
-
-	SPI.transfer(req >> 8);
-	SPI.transfer(req & 0xff);
-	resp  = SPI.transfer(0x00) << 8;
-	resp |= SPI.transfer(0x00);
-
-	count = rlen;
-
-	while(count)
-	{
-		if(rbuf)
-			*rbuf++ = SPI.transfer(0x00);
-		else
-			SPI.transfer(0x00);
-		count--;
-	}
-
-	digitalWrite(SPI_NSS_PIN, HIGH);
-	SPI.endTransaction();
-
-	return rlen;
-}
-
-int PhpocClass::spi_cmd_write(const uint8_t *wbuf, size_t wlen, boolean pgm)
-{
-	uint16_t req, resp;
-	int count;
-
-	req = 0x4000 | wlen;
-
-	SPI.beginTransaction(SPI_PHPOC_SETTINGS);
-	digitalWrite(SPI_NSS_PIN, LOW);
-
-	SPI.transfer(req >> 8);
-	SPI.transfer(req & 0xff);
-	resp  = SPI.transfer(0x00) << 8;
-	resp |= SPI.transfer(0x00);
-
-	count = wlen;
-
-	while(count)
-	{
-		if(pgm)
-			SPI.transfer(pgm_read_byte(wbuf));
-		else
-			SPI.transfer(*wbuf);
-		wbuf++;
-		count--;
-	}
-
-	digitalWrite(SPI_NSS_PIN, HIGH);
-	SPI.endTransaction();
-
-	return wlen;
-}
-
-int PhpocClass::api_write_command(const char *wbuf, int wlen)
+uint16_t PhpocClass::php_request(const char *wbuf, int wlen)
 {
 	int resp_len, api_wait_ms, err;
 	uint8_t head[4], msg[8];
 	uint16_t status;
 
+	Sppc.errno = 0;
+
+	if(!(Sppc.flags & PF_SHIELD))
+	{
+		Sppc.errno = EPERM;
+		return 0;
+	}
+
 	status = spi_resync();
 
-	if(status & SPI_FLAG_SYNC)
+	if(!(status & S2M_FLAG_SYNC))
 	{
-		if(status & SPI_FLAG_TXB)
-			spi_cmd_read(NULL, spi_cmd_txlen()); /* cleanup slave tx buffer */
+		Sppc.errno = EPERM;
+		return 0;
+	}
 
-		head[0] = 0x00 | (wlen >> 8);  /* data & csum bit clear, len 8..11 */
-		head[1] = (uint8_t)wlen;
-		*(uint16_t *)(head + 2) = 0x0000; /* csum/crc */
-		spi_cmd_write(head, 4, false);
+	/* PhpocEmail command arguments
+	 * - v1 : smtp server/login/from/to/subject/data/send/status
+	 * - v2 : php smtp server/login/from/to/subject/data/send/status
+	 *
+	 * PhpocServer/Client command arguments
+	 * - v1 : tcp0/1/2/3/4/5 get/set/send/recv/peek/listen/connect/close
+	 * - v2 : tcp0/1/2/3/4/5 ioctl get/set/close
+	 *        tcp0/1/2/3/4/5 send/recv/peek/bind/listen/connect
+	 *
+	 * Phpoc net command arguments
+	 * - v1 : net0/1 get (PhpocClass::begin)
+	 *        net1 get
+	 * - v2 : net0/1 ioctl get (SppcClass::begin)
+	 *        net ioctl get
+	 */
+	if(!strncmp(wbuf, "php ", 4))
+	{
+		wbuf += 4;
+		wlen -= 4;
+	}
+	else
+	{
+		char *ptr;
 
-		spi_cmd_write((const uint8_t *)wbuf, wlen, false);
+		ptr = wbuf;
+		while(*ptr != ' ')
+			ptr++;
 
-		api_wait_ms = spi_wait_ms;
+		if(!strncmp(ptr, " ioctl ", 7))
+		{
+			strcpy(ptr, ptr + 6);
+			wlen -= 6;
+		}
+	}
+
+	/* cleanup slave tx buffer */
+	if(status & S2M_FLAG_TXB)
+		Sppc.spi_cmd_read(0x3000, NULL, spi_cmd_txlen());
+
+	head[0] = 0x00 | (wlen >> 8);  /* data & csum bit clear, len 8..11 */
+	head[1] = (uint8_t)wlen;
+	*(uint16_t *)(head + 2) = 0x0000; /* csum/crc */
+	Sppc.spi_cmd_write(0x4000, head, 4, false);
+
+	Sppc.spi_cmd_write(0x4000, (const uint8_t *)wbuf, wlen, false);
+
+	api_wait_ms = SPI_WAIT_MS;
 
 _again:
-		if(!spi_wait(4, api_wait_ms))
-		{
+	if(!spi_wait(4, api_wait_ms))
+	{
 #ifdef PF_LOG_SPI
-			if((flags & PF_LOG_SPI) && Serial)
-				Serial.println(F("log> phpoc_cmd: head wait timeout"));
+		if((Sppc.flags & PF_LOG_SPI) && Serial)
+			Serial.println(F("log> phpoc_cmd: head wait timeout"));
 #endif
-			return -PE_TIMEOUT;
-		}
+		Sppc.errno = ETIME;
+		return 0;
+	}
 
-		spi_cmd_read(head, 4);
+	Sppc.spi_cmd_read(0x3000, head, 4);
 
-		resp_len  = head[0] << 8;
-		resp_len |= head[1];
-		resp_len &= 0x0fff;
+	resp_len  = head[0] << 8;
+	resp_len |= head[1];
+	resp_len &= 0x0fff;
 
-		if(resp_len && !spi_wait(resp_len, spi_wait_ms))
-		{
+	if(resp_len && !spi_wait(resp_len, SPI_WAIT_MS))
+	{
 #ifdef PF_LOG_SPI
-			if((flags & PF_LOG_SPI) && Serial)
-				Serial.println(F("log> phpoc_cmd: data wait timeout"));
+		if((Sppc.flags & PF_LOG_SPI) && Serial)
+			Serial.println(F("log> phpoc_cmd: data wait timeout"));
 #endif
-			return -PE_TIMEOUT;
-		}
+		Sppc.errno = ETIME;
+		return 0;
+	}
 
-		if(head[0] & API_FLAG_NAK)
+	if(head[0] & API_FLAG_NAK)
+	{
+		Sppc.spi_cmd_read(0x3000, msg, 4); /* Wnnn */
+		msg[4] = 0x00;
+
+		if(msg[0] == 'E')
 		{
-			spi_cmd_read(msg, 4); /* Wnnn */
-			msg[4] = 0x00;
+			err = atoi((const char *)msg + 1);
 
-			if(msg[0] == 'E')
+#ifdef PF_LOG_SPI
+			if((Sppc.flags & PF_LOG_SPI) && Serial)
 			{
-				err = atoi_u16((const char *)msg + 1);
+				resp_len -= 4;
 
-#ifdef PF_LOG_SPI
-				if((flags & PF_LOG_SPI) && Serial)
+				sppc_printf(F("log> phpoc_cmd: error %d, "), err);
+
+				while(resp_len > 0)
 				{
-					resp_len -= 4;
-
-					Serial.print(F("log> phpoc_cmd: error "));
-					Serial.print(err);
-					Serial.print(F(", "));
-
-					while(resp_len > 0)
-					{
-						spi_cmd_read(msg, 1);
-						Serial.write(*msg);
-						resp_len--;
-					}
-
-					Serial.println();
+					Sppc.spi_cmd_read(0x3000, msg, 1);
+					Serial.write(*msg);
+					resp_len--;
 				}
+
+				Serial.println();
+			}
 #endif
-				return -err;
-			}
-			else
-			if(msg[0] == 'W')
-			{
-				api_wait_ms = atoi_u16((const char *)msg + 1) * 1000;
-
-				/*
-				if((flags & PF_LOG_SPI) && Serial)
-				{
-					Serial.print(F("phpoc_cmd: api wait "));
-					Serial.print(api_wait_ms);
-					Serial.println();
-				}
-				*/
-				goto _again;
-			}
-			else
-				return -PE_PROTOCOL;
+			Sppc.errno = err;
+			return 0;
 		}
 		else
-			return resp_len;
+		if(msg[0] == 'W')
+		{
+			api_wait_ms = atoi((const char *)msg + 1) * 1000;
+
+			/*
+			if((Sppc.flags & PF_LOG_SPI) && Serial)
+				sppc_printf(F("log> phpoc_cmd: api wait %d\r\n"), api_wait_ms);
+			*/
+			goto _again;
+		}
+		else
+		{
+			Sppc.errno = EPROTO;
+			return 0;
+		}
 	}
 	else
-		return 0;
+		return resp_len;
 }
 
-int PhpocClass::api_write_data(const uint8_t *wbuf, int wlen, boolean pgm)
+int PhpocClass::php_write_data(const uint8_t *wbuf, int wlen, boolean pgm)
 {
 	uint8_t head[4];
+	uint16_t status;
 
-	if(spi_resync() & SPI_FLAG_SYNC)
+	Sppc.errno = 0;
+
+	if(!(Sppc.flags & PF_SHIELD))
 	{
-		head[0] = API_FLAG_DATA | (wlen >> 8);  /* data bit set, csum bit clear, len 8..11 */
-		head[1] = (uint8_t)wlen;
-		*(uint16_t *)(head + 2) = 0x0000; /* csum/crc */
-		spi_cmd_write(head, 4, false);
-
-		return spi_cmd_write(wbuf, wlen, pgm);
-	}
-	else
+		Sppc.errno = EPERM;
 		return 0;
-}
-
-IPAddress PhpocClass::inet_aton(const char *str)
-{
-	const char *digit_ptr;
-	int i, len, digit;
-	IPAddress ipaddr;
-
-	len = 0;
-	ipaddr = INADDR_NONE;
-
-	for(i = 0; i < 4; i++)
-	{
-		if(!*str)
-			return INADDR_NONE;
-
-		digit_ptr = str;
-
-		while(isdigit(*str))
-		{
-			str++;
-			len++;
-		}
-
-		if((str - digit_ptr) > 3)
-			return INADDR_NONE;
-
-		if(i < 3)
-		{
-			if(*str != '.')
-				return INADDR_NONE;
-			str++;
-			len++;
-		}
-
-		digit = atoi_u16(digit_ptr);
-		if(digit > 255)
-			return INADDR_NONE;
-
-		ipaddr[i] |= digit;
 	}
 
-	return ipaddr;
+	status = spi_resync();
+
+	if(!(status & S2M_FLAG_SYNC))
+	{
+		Sppc.errno = EPERM;
+		return 0;
+	}
+
+	head[0] = API_FLAG_DATA | (wlen >> 8);  /* data bit set, csum bit clear, len 8..11 */
+	head[1] = (uint8_t)wlen;
+	*(uint16_t *)(head + 2) = 0x0000; /* csum/crc */
+	Sppc.spi_cmd_write(0x4000, head, 4, false);
+
+	return Sppc.spi_cmd_write(0x4000, wbuf, wlen, pgm);
 }
 
-int PhpocClass::command(const __FlashStringHelper *format, ...)
+#endif /* INCLUDE_LIB_V1 */
+
+uint16_t PhpocClass::command(const __FlashStringHelper *format, ...)
+{
+#ifdef MEASURE_COMMAND_TIME
+	uint16_t t1_ms;
+	int retval;
+#endif
+	char vsp_buf[VSP_COUNT_LIMIT];
+	va_list args;
+	int cmd_len;
+
+#ifdef MEASURE_COMMAND_TIME
+	t1_ms = (uint16_t)millis();
+#endif
+
+	va_start(args, format);
+	cmd_len = sppc_vsprintf(vsp_buf, format, args);
+	va_end(args);
+
+#ifdef INCLUDE_LIB_V1
+	if(Sppc.flags & PF_SYNC_V1)
+#ifdef MEASURE_COMMAND_TIME
+	{
+		retval = php_request(vsp_buf, cmd_len);
+		sppc_printf(F("<%d>"), (uint16_t)millis() - t1_ms);
+		return retval;
+	}
+#else
+		return php_request(vsp_buf, cmd_len);
+#endif
+	else
+#endif
+		return Sppc.sppc_request(vsp_buf, cmd_len);
+}
+
+uint16_t PhpocClass::command(const char *format, ...)
 {
 	char vsp_buf[VSP_COUNT_LIMIT];
 	va_list args;
 	int cmd_len;
 
-	if(!(flags & PF_SHIELD))
-		return -PE_NO_SHIELD;
-
 	va_start(args, format);
-	cmd_len = PhpocClass::vsprintf(vsp_buf, format, args);
+	cmd_len = sppc_vsprintf(vsp_buf, format, args);
 	va_end(args);
 
-	return api_write_command(vsp_buf, cmd_len);
-}
-
-int PhpocClass::command(const char *format, ...)
-{
-	char vsp_buf[VSP_COUNT_LIMIT];
-	va_list args;
-	int cmd_len;
-
-	if(!(flags & PF_SHIELD))
-		return -PE_NO_SHIELD;
-
-	va_start(args, format);
-	cmd_len = PhpocClass::vsprintf(vsp_buf, format, args);
-	va_end(args);
-
-	return api_write_command(vsp_buf, cmd_len);
+#ifdef INCLUDE_LIB_V1
+	if(Sppc.flags & PF_SYNC_V1)
+		return php_request(vsp_buf, cmd_len);
+	else
+#endif
+		return Sppc.sppc_request(vsp_buf, cmd_len);
 }
 
 int PhpocClass::write(const __FlashStringHelper *wstr)
 {
-	if(!(flags & PF_SHIELD))
-		return 0;
-
-	return api_write_data((const uint8_t *)wstr, strlen_P((const char *)wstr), true);
+#ifdef INCLUDE_LIB_V1
+	if(Sppc.flags & PF_SYNC_V1)
+		return php_write_data((const uint8_t *)wstr, strlen_P((const char *)wstr), true);
+	else
+#endif
+		return Sppc.write(wstr);
 }
 
 int PhpocClass::write(const char *wstr)
 {
-	if(!(flags & PF_SHIELD))
-		return 0;
-
-	return api_write_data((const uint8_t *)wstr, strlen(wstr), false);
+#ifdef INCLUDE_LIB_V1
+	if(Sppc.flags & PF_SYNC_V1)
+		return php_write_data((const uint8_t *)wstr, strlen(wstr), false);
+	else
+#endif
+		return Sppc.write(wstr);
 }
 
 int PhpocClass::write(const uint8_t *wbuf, size_t wlen)
 {
-	if(!(flags & PF_SHIELD))
-		return 0;
-
-	return api_write_data((const uint8_t *)wbuf, wlen, false);
+#ifdef INCLUDE_LIB_V1
+	if(Sppc.flags & PF_SYNC_V1)
+		return php_write_data((const uint8_t *)wbuf, wlen, false);
+	else
+#endif
+		return Sppc.write(wbuf, wlen);
 }
 
 int PhpocClass::read(uint8_t *rbuf, size_t rlen)
 {
+	uint16_t status;
 	int spi_txlen;
 
-	if(!(flags & PF_SHIELD))
-		return 0;
+	Sppc.errno = 0;
 
-	if(spi_resync() & SPI_FLAG_SYNC)
+	if(!(Sppc.flags & PF_SHIELD))
 	{
+		Sppc.errno = EPERM;
+		return 0;
+	}
+
+#ifdef INCLUDE_LIB_V1
+	if(Sppc.flags & PF_SYNC_V1)
+	{
+		status = spi_resync();
+
+		if(!(status & S2M_FLAG_SYNC))
+		{
+			Sppc.errno = EPERM;
+			return 0;
+		}
+
 		if((spi_txlen = spi_cmd_txlen()))
 		{
 			if(rlen >= spi_txlen)
 				rlen = spi_txlen;
-			return spi_cmd_read(rbuf, rlen);
+
+			return Sppc.spi_cmd_read(0x3000, rbuf, rlen);
 		}
 	}
+	else
+#endif
+		return Sppc.read(rbuf, rlen);
+}
 
-	return 0;
+int PhpocClass::getHostByName(const char *hostname, IPAddress &ipaddr, int wait_ms)
+{
+	int len;
+
+	Sppc.errno = 0;
+
+	if(!(Sppc.flags & PF_SHIELD))
+	{
+		Sppc.errno = EPERM;
+
+		ipaddr = INADDR_NONE;
+		return 4;
+	}
+
+#ifdef PF_LOG_NET
+	if((Sppc.flags & PF_LOG_NET) && Serial)
+		sppc_printf(F("log> dns: query A %s >> "), hostname);
+#endif
+
+#ifdef INCLUDE_LIB_V1
+	if(Sppc.flags & PF_SYNC_V1)
+		len = command(F("dns query A %s %u"), hostname, wait_ms);
+	else
+#endif
+	{
+		Sppc.command(F("dns set timeout %d"), wait_ms);
+		Sppc.command(F("dns query %s A"), hostname);
+		len = Sppc.command(F("dns get answer A"));
+	}
+
+	if(len > 0)
+		ipaddr = readIP();
+	else
+		ipaddr = INADDR_NONE;
+
+#ifdef PF_LOG_NET
+	if((Sppc.flags & PF_LOG_NET) && Serial)
+	{
+		Serial.print(ipaddr);
+		Serial.println();
+	}
+#endif
+
+	return 4;
+}
+
+int PhpocClass::tcpIoctlReadInt(const __FlashStringHelper *args, int sock_id)
+{
+	int retval;
+
+#ifdef INCLUDE_LIB_V1
+	if(Sppc.flags & PF_SYNC_V1)
+	{
+		retval = command(F("tcp%u ioctl get %S"), sock_id, args);
+
+		if(retval > 0)
+			return Phpoc.readInt();
+		else
+			return 0;
+	}
+	else
+#endif
+		return Sppc.command(F("tcp%u ioctl get %S"), sock_id, args);
+}
+
+int PhpocClass::getHostByName6(const char *hostname, IP6Address &ip6addr, int wait_ms)
+{
+	int len;
+
+	Sppc.errno = 0;
+
+	if(!(Sppc.flags & PF_SHIELD))
+	{
+		Sppc.errno = EPERM;
+
+		ip6addr = IN6ADDR_NONE;
+		return 16;
+	}
+
+#ifdef PF_LOG_NET
+	if((Sppc.flags & PF_LOG_NET) && Serial)
+		sppc_printf(F("log> dns: query AAAA %s >> "), hostname);
+#endif
+
+#ifdef INCLUDE_LIB_V1
+	if(Sppc.flags & PF_SYNC_V1)
+		len = command(F("dns query AAAA %s %u"), hostname, wait_ms);
+	else
+#endif
+	{
+		Sppc.command(F("dns set timeout %d"), wait_ms);
+		Sppc.command(F("dns query %s AAAA"), hostname);
+		len = Sppc.command(F("dns get answer AAAA"));
+	}
+
+	if(len > 0)
+		ip6addr = readIP6();
+	else
+		ip6addr = IN6ADDR_NONE;
+
+#ifdef PF_LOG_NET
+	if((Sppc.flags & PF_LOG_NET) && Serial)
+	{
+		Serial.print(ip6addr);
+		Serial.println();
+	}
+#endif
+
+	return 16;
 }
 
 uint16_t PhpocClass::readInt()
@@ -502,13 +575,18 @@ uint16_t PhpocClass::readInt()
 	char *nptr;
 	int rlen;
 
-	if(!(flags & PF_SHIELD))
+	Sppc.errno = 0;
+
+	if(!(Sppc.flags & PF_SHIELD))
+	{
+		Sppc.errno = EPERM;
 		return 0;
+	}
 
 	if((rlen = read((uint8_t *)int_str, 5)))
 	{
 		int_str[rlen] = 0x00;
-		return atoi_u16(int_str);
+		return atoi(int_str);
 	}
 	else
 		return 0;
@@ -517,15 +595,22 @@ uint16_t PhpocClass::readInt()
 IPAddress PhpocClass::readIP()
 {
 	char addr_str[16]; /* x.x.x.x (min 7), xxx.xxx.xxx.xxx (max 15) */
+	IPAddress ipaddr;
 	int rlen;
 
-	if(!(flags & PF_SHIELD))
+	Sppc.errno = 0;
+
+	if(!(Sppc.flags & PF_SHIELD))
+	{
+		Sppc.errno = EPERM;
 		return INADDR_NONE;
+	}
 
 	if((rlen = read((uint8_t *)addr_str, 15)))
 	{
 		addr_str[rlen] = 0x00;
-		return inet_aton(addr_str);
+		ipaddr.fromString(addr_str);
+		return ipaddr;
 	}
 	else
 		return INADDR_NONE;
@@ -536,8 +621,13 @@ IP6Address PhpocClass::readIP6()
 	char addr_str[40]; /* ::0 (min 3), xxxx:..:xxxx (max 39) */
 	int rlen;
 
-	if(!(flags & PF_SHIELD))
+	Sppc.errno = 0;
+
+	if(!(Sppc.flags & PF_SHIELD))
+	{
+		Sppc.errno = EPERM;
 		return IN6ADDR_NONE;
+	}
 
 	if((rlen = read((uint8_t *)addr_str, 40)))
 	{
@@ -548,111 +638,50 @@ IP6Address PhpocClass::readIP6()
 		return IN6ADDR_NONE;
 }
 
-int PhpocClass::getHostByName(const char *hostname, IPAddress &ipaddr, int wait_ms)
-{
-	int len;
-
-	if(!(flags & PF_SHIELD))
-	{
-		ipaddr = INADDR_NONE;
-		return 4;
-	}
-
-#ifdef PF_LOG_NET
-	if((Phpoc.flags & PF_LOG_NET) && Serial)
-	{
-		Serial.print(F("log> phpoc_dns: query A "));
-		Serial.print(hostname);
-		Serial.print(F(" >> "));
-	}
-#endif
-
-	len = Phpoc.command(F("dns query A %s %u"), hostname, wait_ms);
-
-	if(len > 0)
-		ipaddr = Phpoc.readIP();
-	else
-		ipaddr = INADDR_NONE;
-
-#ifdef PF_LOG_NET
-	if((Phpoc.flags & PF_LOG_NET) && Serial)
-	{
-		Serial.print(ipaddr);
-		Serial.println();
-	}
-#endif
-
-	return 4;
-}
-
-int PhpocClass::getHostByName6(const char *hostname, IP6Address &ip6addr, int wait_ms)
-{
-	int len;
-
-	if(!(flags & PF_SHIELD))
-	{
-		ip6addr = IN6ADDR_NONE;
-		return 16;
-	}
-
-#ifdef PF_LOG_NET
-	if((Phpoc.flags & PF_LOG_NET) && Serial)
-	{
-		Serial.print(F("log> phpoc_dns: query AAAA "));
-		Serial.print(hostname);
-		Serial.print(F(" >> "));
-	}
-#endif
-
-	len = Phpoc.command(F("dns query AAAA %s %u"), hostname, wait_ms);
-
-	if(len > 0)
-		ip6addr = Phpoc.readIP6();
-	else
-		ip6addr = IN6ADDR_NONE;
-
-#ifdef PF_LOG_NET
-	if((Phpoc.flags & PF_LOG_NET) && Serial)
-	{
-		Serial.print(ip6addr);
-		Serial.println();
-	}
-#endif
-
-	return 16;
-}
-
 void PhpocClass::logFlush(uint8_t id)
 {
-	Phpoc.command(F("sys log%u flush"), id);
+#ifdef INCLUDE_LIB_V1
+	if(Sppc.flags & PF_SYNC_V1)
+		command(F("sys log%u flush"), id);
+	else
+#endif
+		Sppc.logFlush(id);
 }
 
 #define LOG_BUF_SIZE 32
 
 void PhpocClass::logPrint(uint8_t id)
 {
-	char log[LOG_BUF_SIZE + 2];
+	char log[LOG_BUF_SIZE];
 	int len;
 
 	if(!Serial)
 		return;
 
-	while((len = Phpoc.command(F("sys log%u read %u"), id, LOG_BUF_SIZE)) > 0)
+#ifdef INCLUDE_LIB_V1
+	if(Sppc.flags & PF_SYNC_V1)
 	{
-		Phpoc.read((uint8_t *)log, len);
-		log[len] = 0x00;
-		Serial.write(log, len);
+		while((len = command(F("sys log%u read %u"), id, LOG_BUF_SIZE)) > 0)
+		{
+			read((uint8_t *)log, len);
+			Serial.write(log, len);
+		}
 	}
+	else
+#endif
+		Sppc.logPrint(id);
 }
 
-#define MAX_BEGIN_WAIT 10
 
+#define MAX_NET_WAIT 10000
+
+#ifdef INCLUDE_LIB_V1
 int PhpocClass::beginIP4()
 {
 	int wait_count;
 
 #ifdef PF_LOG_NET
-	if((flags & PF_LOG_NET) && Serial)
+	if((Sppc.flags & PF_LOG_NET) && Serial)
 		Serial.print(F("log> phpoc_begin: IPv4 "));
 #endif
 
@@ -660,17 +689,17 @@ int PhpocClass::beginIP4()
 
 	while(!localIP())
 	{
-		if(wait_count >= MAX_BEGIN_WAIT)
+		if(wait_count >= MAX_NET_WAIT)
 		{
 #ifdef PF_LOG_NET
-			if((flags & PF_LOG_NET) && Serial)
+			if((Sppc.flags & PF_LOG_NET) && Serial)
 				Serial.println();
 #endif
 			return 0;
 		}
 
 #ifdef PF_LOG_NET
-		if((flags & PF_LOG_NET) && Serial)
+		if((Sppc.flags & PF_LOG_NET) && Serial)
 		{
 			if(!wait_count)
 				Serial.print(F("acquiring IP address ."));
@@ -680,11 +709,11 @@ int PhpocClass::beginIP4()
 #endif
 
 		delay(1000);
-		wait_count++;
+		wait_count += 1000;
 	}
 
 #ifdef PF_LOG_NET
-	if((flags & PF_LOG_NET) && Serial)
+	if((Sppc.flags & PF_LOG_NET) && Serial)
 	{
 		Serial.print(localIP());
 		Serial.print(' ');
@@ -699,32 +728,34 @@ int PhpocClass::beginIP4()
 
 	return 1;
 }
+#endif /* INCLUDE_LIB_V1 */
 
 int PhpocClass::beginIP6()
 {
+#ifdef INCLUDE_LIB_V1
 	IP6Address ip6addr;
 	int wait_count = 0;
 
+	if(Sppc.flags & PF_SYNC_V2)
+		return Sppc.beginIP6();
+
 	/* don't call localIP6() before PF_IP6 flag is set */
-	if(command(F("net0 get ipaddr6 0")) >= 0)
-		ip6addr = readIP6();
+	command(F("net1 ioctl get ipaddr6 0"));
+	ip6addr = readIP6();
 
 	if(ip6addr == IN6ADDR_NONE)
 	{
 #ifdef PF_LOG_NET
-		if((flags & PF_LOG_NET) && Serial)
-		{
-			Serial.print(F("log> phpoc_begin: IPv6 not enabled"));
-			Serial.println();
-		}
+		if((Sppc.flags & PF_LOG_NET) && Serial)
+			Serial.println(F("log> phpoc_begin: IPv6 not enabled"));
 #endif
 		return 0;
 	}
 
-	flags |= PF_IP6;
+	Sppc.flags |= PF_IP6;
 
 #ifdef PF_LOG_NET
-	if((flags & PF_LOG_NET) && Serial)
+	if((Sppc.flags & PF_LOG_NET) && Serial)
 		Serial.print(F("log> phpoc_begin: IPv6 "));
 #endif
 
@@ -732,17 +763,17 @@ int PhpocClass::beginIP6()
 
 	while(globalIP6() == IN6ADDR_NONE)
 	{
-		if(wait_count >= MAX_BEGIN_WAIT)
+		if(wait_count >= MAX_NET_WAIT)
 		{
 #ifdef PF_LOG_NET
-			if((flags & PF_LOG_NET) && Serial)
+			if((Sppc.flags & PF_LOG_NET) && Serial)
 				Serial.println();
 #endif
 			return 0;
 		}
 
 #ifdef PF_LOG_NET
-		if((flags & PF_LOG_NET) && Serial)
+		if((Sppc.flags & PF_LOG_NET) && Serial)
 		{
 			if(!wait_count)
 				Serial.print(F("acquiring global IP address ."));
@@ -752,11 +783,11 @@ int PhpocClass::beginIP6()
 #endif
 
 		delay(1000);
-		wait_count++;
+		wait_count += 1000;
 	}
 
 #ifdef PF_LOG_NET
-	if((flags & PF_LOG_NET) && Serial)
+	if((Sppc.flags & PF_LOG_NET) && Serial)
 	{
 		Serial.print(localIP6());
 		Serial.print(' ');
@@ -771,50 +802,89 @@ int PhpocClass::beginIP6()
 		Serial.print(dnsServerIP6());
 		Serial.println();
 	}
-#endif
 
 	return 1;
+#endif
+#else /* INCLUDE_LIB_V1 */
+	return Sppc.beginIP6();
+#endif
 }
 
+#define MAX_BOOT_WAIT 500
 #define MSG_BUF_SIZE 16
 
-int PhpocClass::begin(uint8_t init_flags)
+int PhpocClass::begin(uint16_t init_flags)
 {
+#ifdef INCLUDE_LIB_V1
 	uint8_t net_id, wait_count;
 	uint8_t msg[MSG_BUF_SIZE];
 	int len, sock_id;
+#endif
+	uint16_t status;
 
-	flags |= init_flags;
-	spi_wait_ms = SPI_WAIT_MS;
+	Sppc.flags |= init_flags;
 
 	pinMode(SPI_NSS_PIN, OUTPUT);
+	digitalWrite(SPI_NSS_PIN, HIGH);
+
 	SPI.begin();
 
-	if(!(spi_resync() & SPI_FLAG_SYNC))
-		return 0;
+	Sppc.flags |= PF_INIT_SPI;
+
+#ifdef INCLUDE_LIB_V1
+	wait_count = 0;
+
+_retry_sync:
+	status = Sppc.spi_resync();
+
+	if(status & S2M_FLAG_SYNC)
+#endif
+		return Sppc.begin(init_flags);
+
+#ifdef INCLUDE_LIB_V1
+
+	Sppc.errno = 0;
+
+	status = spi_resync();
+
+	if(!(status & S2M_FLAG_SYNC))
+	{
+		delay(100);
+		wait_count += 100;
+
+		if(wait_count >= MAX_BOOT_WAIT)
+		{
+			Sppc.errno = EPERM;
+			return 0;
+		}
+		else
+			goto _retry_sync;
+	}
+
+	Sppc.flags |= PF_SYNC_V1;
 
 	/* we should set PF_SHIELD flag after spi_resync success */
-	flags |= PF_SHIELD;
+	Sppc.flags |= PF_SHIELD;
 
-	if(Phpoc.command(F("sys pkg ver")) > 0)
+	if(command(F("sys pkg ver")) > 0)
 	{
 		char *ver;
 
-		len = Phpoc.read(msg, MSG_BUF_SIZE);
+		len = read(msg, MSG_BUF_SIZE);
 		msg[len] = 0x00;
 
 		ver = (char *)msg;
-		pkg_ver_id = 0;
+		Sppc.pkg_ver_id = 0;
 
 		for(int i = 0; i < 3; i++)
 		{
 			if(i == 0)
-				pkg_ver_id += atoi_u16(ver) * 10000;
+				Sppc.pkg_ver_id += atoi(ver) * 10000;
 			else
 			if(i == 1)
-				pkg_ver_id += atoi_u16(ver) * 100;
+				Sppc.pkg_ver_id += atoi(ver) * 100;
 			else
-				pkg_ver_id += atoi_u16(ver);
+				Sppc.pkg_ver_id += atoi(ver);
 
 			while(*ver && (*ver != '.'))
 				ver++;
@@ -823,57 +893,42 @@ int PhpocClass::begin(uint8_t init_flags)
 		}
 
 #ifdef PF_LOG_NET
-		if((flags & PF_LOG_NET) && Serial)
-		{
-			Serial.print(F("log> phpoc_begin: "));
-			Serial.print(F("shield package version "));
-			Serial.write(msg, len);
-			Serial.print(' ');
-			Serial.println();
-		}
+		if((Sppc.flags & PF_LOG_NET) && Serial)
+			sppc_printf(F("log> phpoc_begin: package %s\r\n"), msg);
 #endif
 	}
 	else
-		pkg_ver_id = 10000;
+		Sppc.pkg_ver_id = 10000;
 
 #ifdef PF_LOG_NET
-	if((flags & PF_LOG_NET) && Serial)
+	if((Sppc.flags & PF_LOG_NET) && Serial)
 		Serial.print(F("log> phpoc_begin: "));
 #endif
 		
-	if(Phpoc.command(F("net1 get mode")) < 0)
-		return 0;
-	len = Phpoc.read(msg, MSG_BUF_SIZE);
+	command(F("net1 ioctl get mode"));
+	len = read(msg, MSG_BUF_SIZE);
 
 	if(len > 0)
 	{ /* WiFi dongle installed */
 		net_id = 1;
 
 #ifdef PF_LOG_NET
-		if((flags & PF_LOG_NET) && Serial)
+		if((Sppc.flags & PF_LOG_NET) && Serial)
 		{
-			Serial.print(F("WiFi "));
+			msg[len] = 0x00;
+			sppc_printf(F("WiFi %s "), msg);
 
-			Serial.write(msg, len);
-			Serial.print(' ');
-
-			if(pkg_ver_id > 10000)
+			if(Sppc.pkg_ver_id > 10000)
 			{
-				if(Phpoc.command(F("net1 get ssid")) > 0)
-				{
-					len = Phpoc.read(msg, MSG_BUF_SIZE);
-					Serial.write(msg, len);
-					Serial.print(' ');
-				}
+				command(F("net1 ioctl get ssid"));
+				len = read(msg, MSG_BUF_SIZE);
+				msg[len] = 0x00;
+				sppc_printf(F("%s "), msg);
 
-				if(Phpoc.command(F("net1 get ch")) > 0)
-				{
-					Serial.print(F("ch"));
-
-					len = Phpoc.read(msg, MSG_BUF_SIZE);
-					Serial.write(msg, len);
-					Serial.print(' ');
-				}
+				command(F("net1 ioctl get ch"));
+				len = read(msg, MSG_BUF_SIZE);
+				msg[len] = 0x00;
+				sppc_printf(F("ch%s "), msg);
 			}
 		}
 #endif
@@ -882,26 +937,23 @@ int PhpocClass::begin(uint8_t init_flags)
 	{ /* WiFi dongle not installed */
 		net_id = 0;
 
-		if(Phpoc.command(F("net0 get mode")) < 0)
-			return 0;
-		len = Phpoc.read(msg, MSG_BUF_SIZE);
+		command(F("net0 ioctl get mode"));
+		len = read(msg, MSG_BUF_SIZE);
 
 		if(len)
 		{ /* ethernet present */
 #ifdef PF_LOG_NET
-			if((flags & PF_LOG_NET) && Serial)
+			if((Sppc.flags & PF_LOG_NET) && Serial)
 			{
-				Serial.print(F("Ethernet "));
-
-				Serial.write(msg, len);
-				Serial.print(' ');
+				msg[len] = 0x00;
+				sppc_printf(F("Ethernet %s "), msg);
 			}
 #endif
 		}
 		else
 		{ /* ethernet absent */
 #ifdef PF_LOG_NET
-			if((flags & PF_LOG_NET) && Serial)
+			if((Sppc.flags & PF_LOG_NET) && Serial)
 				Serial.println(F("WiFi dongle not installed"));
 #endif
 			return 0;
@@ -912,17 +964,19 @@ int PhpocClass::begin(uint8_t init_flags)
 
 	while(1)
 	{
-		if(Phpoc.command(F("net%u get speed"), net_id) < 0)
-			return 0;
+		int speed;
 
-		if(readInt() > 0) /* Ethernet plugged, or WiFi associated ? */
+		command(F("net%u ioctl get speed"), net_id);
+		speed = readInt();
+
+		if(speed > 0) /* Ethernet plugged, or WiFi associated ? */
 			break;
 
-		if(wait_count >= MAX_BEGIN_WAIT)
+		if(wait_count >= MAX_NET_WAIT)
 			break;
 
 #ifdef PF_LOG_NET
-		if((flags & PF_LOG_NET) && Serial)
+		if((Sppc.flags & PF_LOG_NET) && Serial)
 		{
 			if(!wait_count)
 			{
@@ -937,18 +991,20 @@ int PhpocClass::begin(uint8_t init_flags)
 #endif
 
 		delay(1000);
-		wait_count++;
+		wait_count += 1000;
 	}
 
 #ifdef PF_LOG_NET
-	if((flags & PF_LOG_NET) && Serial)
+	if((Sppc.flags & PF_LOG_NET) && Serial)
 		Serial.println();
 #endif
 
-	for(sock_id = 0; sock_id < MAX_SOCK_TCP; sock_id++)
-		Phpoc.command(F("tcp%u close"), sock_id);
+	/* init app - smtp */
+	command(F("php smtp server")); /* clear MSA server */
 
 	return beginIP4();
+
+#endif /* INCLUDE_LIB_V1 */
 }
 
 int PhpocClass::maintain()
@@ -958,101 +1014,135 @@ int PhpocClass::maintain()
 
 IPAddress PhpocClass::localIP()
 {
-	if(!(flags & PF_SHIELD))
-		return INADDR_NONE;
+	Sppc.errno = 0;
 
-	if(command(F("net0 get ipaddr")) < 0)
+	if(!(Sppc.flags & PF_SHIELD))
+	{
+		Sppc.errno = EPERM;
 		return INADDR_NONE;
+	}
 
+	command(F("net1 ioctl get ipaddr"));
 	return readIP();
 }
 
 IPAddress PhpocClass::subnetMask()
 {
-	if(!(flags & PF_SHIELD))
-		return INADDR_NONE;
+	Sppc.errno = 0;
 
-	if(command(F("net0 get netmask")) < 0)
+	if(!(Sppc.flags & PF_SHIELD))
+	{
+		Sppc.errno = EPERM;
 		return INADDR_NONE;
+	}
 
+	command(F("net1 ioctl get netmask"));
 	return readIP();
 }
 
 IPAddress PhpocClass::gatewayIP()
 {
-	if(!(flags & PF_SHIELD))
-		return INADDR_NONE;
+	Sppc.errno = 0;
 
-	if(command(F("net0 get gwaddr")) < 0)
+	if(!(Sppc.flags & PF_SHIELD))
+	{
+		Sppc.errno = EPERM;
 		return INADDR_NONE;
+	}
 
+	command(F("net1 ioctl get gwaddr"));
 	return readIP();
 }
 
 IPAddress PhpocClass::dnsServerIP()
 {
-	if(!(flags & PF_SHIELD))
-		return INADDR_NONE;
+	Sppc.errno = 0;
 
-	if(command(F("net0 get nsaddr")) < 0)
+	if(!(Sppc.flags & PF_SHIELD))
+	{
+		Sppc.errno = EPERM;
 		return INADDR_NONE;
+	}
 
+	command(F("net1 ioctl get nsaddr"));
 	return readIP();
 }
 
 IP6Address PhpocClass::localIP6()
 {
-	if(!(flags & PF_SHIELD) || !(flags & PF_IP6))
-		return IN6ADDR_NONE;
+	Sppc.errno = 0;
 
-	if(command(F("net0 get ipaddr6 0")) < 0)
+	if(!(Sppc.flags & PF_SHIELD) || !(Sppc.flags & PF_IP6))
+	{
+		Sppc.errno = EPERM;
 		return IN6ADDR_NONE;
+	}
 
+	command(F("net1 ioctl get ipaddr6 0"));
 	return readIP6();
 }
 
 IP6Address PhpocClass::globalIP6()
 {
-	if(!(flags & PF_SHIELD) || !(flags & PF_IP6))
-		return IN6ADDR_NONE;
+	Sppc.errno = 0;
 
-	if(command(F("net0 get ipaddr6 1")) < 0)
+	if(!(Sppc.flags & PF_SHIELD) || !(Sppc.flags & PF_IP6))
+	{
+		Sppc.errno = EPERM;
 		return IN6ADDR_NONE;
+	}
 
+	command(F("net1 ioctl get ipaddr6 1"));
 	return readIP6();
 }
 
 IP6Address PhpocClass::gatewayIP6()
 {
-	if(!(flags & PF_SHIELD) || !(flags & PF_IP6))
-		return IN6ADDR_NONE;
+	Sppc.errno = 0;
 
-	if(command(F("net0 get gwaddr6")) < 0)
+	if(!(Sppc.flags & PF_SHIELD) || !(Sppc.flags & PF_IP6))
+	{
+		Sppc.errno = EPERM;
 		return IN6ADDR_NONE;
+	}
 
+	command(F("net1 ioctl get gwaddr6"));
 	return readIP6();
 }
 
 IP6Address PhpocClass::dnsServerIP6()
 {
-	if(!(flags & PF_SHIELD) || !(flags & PF_IP6))
-		return IN6ADDR_NONE;
+	Sppc.errno = 0;
 
-	if(command(F("net0 get nsaddr6")) < 0)
+	if(!(Sppc.flags & PF_SHIELD) || !(Sppc.flags & PF_IP6))
+	{
+		Sppc.errno = EPERM;
 		return IN6ADDR_NONE;
+	}
 
+	command(F("net1 ioctl get nsaddr6"));
 	return readIP6();
 }
 
 int PhpocClass::globalPrefix6()
 {
-	if(!(flags & PF_SHIELD) || !(flags & PF_IP6))
-		return 0;
+	Sppc.errno = 0;
 
-	if(command(F("net0 get prefix6")) < 0)
+	if(!(Sppc.flags & PF_SHIELD) || !(Sppc.flags & PF_IP6))
+	{
+		Sppc.errno = EPERM;
 		return 0;
+	}
 
-	return readInt();
+#ifdef INCLUDE_LIB_V1
+	if(Sppc.flags & PF_SYNC_V1)
+	{
+		command(F("net1 ioctl get prefix6"));
+		return readInt();
+	}
+	else
+#endif
+		return command(F("net1 ioctl get prefix6"));
 }
 
 PhpocClass Phpoc;

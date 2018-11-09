@@ -31,16 +31,9 @@
 
 #include "Phpoc.h"
 
-#ifdef INCLUDE_PHPOC_CACHE
-uint32_t PhpocClient::tick_32ms[MAX_SOCK_TCP];
-uint8_t  PhpocClient::state_32ms[MAX_SOCK_TCP];
-uint16_t PhpocClient::rxlen_32ms[MAX_SOCK_TCP];
-uint8_t  PhpocClient::read_cache_len[MAX_SOCK_TCP];
-uint8_t  PhpocClient::write_cache_len[MAX_SOCK_TCP];
-uint8_t  PhpocClient::read_cache_buf[MAX_SOCK_TCP][READ_CACHE_SIZE];
-uint8_t  PhpocClient::write_cache_buf[MAX_SOCK_TCP][WRITE_CACHE_SIZE];
-#endif
-char PhpocClient::read_line_buf[LINE_BUF_SIZE + 2];
+char PhpocClient::read_line_buf[SOCK_LINE_BUF_SIZE + 2];
+uint8_t PhpocClient::conn_flags;
+uint8_t PhpocClient::init_flags;
 
 PhpocClient::PhpocClient()
 {
@@ -51,57 +44,48 @@ PhpocClient::PhpocClient(uint8_t id)
 {
 	if(id >= MAX_SOCK_TCP)
 		sock_id = MAX_SOCK_TCP;
-	else
-	if(id < SOCK_ID_TCP)
-		sock_id = MAX_SOCK_TCP;
+	//else
+	//if(id < SOCK_ID_TCP)
+	//	sock_id = MAX_SOCK_TCP;
 	else
 		sock_id = id;
 }
 
-#ifdef INCLUDE_PHPOC_CACHE
-void PhpocClient::update_cache(uint8_t id)
+uint16_t PhpocClient::command(const __FlashStringHelper *format, ...)
 {
-	int len;
+	char vsp_buf[VSP_COUNT_LIMIT];
+	va_list args;
+	int cmd_len;
 
-	if(rxlen_32ms[id] && !read_cache_len[id])
-	{
-		len = Phpoc.command(F("tcp%u recv %u"), id, READ_CACHE_SIZE);
+	if(Sppc.flags & PF_SYNC_V1)
+		return 0;
 
-		if(len > 0)
-		{
-			Phpoc.read(read_cache_buf[id] + READ_CACHE_SIZE - len, len);
-			read_cache_len[id] = len;
+	cmd_len = sppc_sprintf(vsp_buf, F("tcp%u "), sock_id);
 
-			if(Phpoc.command(F("tcp%u get rxlen"), id) <= 0)
-				rxlen_32ms[id] = 0;
-			else
-				rxlen_32ms[id] = Phpoc.readInt();
-		}
-	}
+	va_start(args, format);
+	cmd_len += sppc_vsprintf(vsp_buf + cmd_len, format, args);
+	va_end(args);
 
-	if(tick_32ms[id] == (millis() & 0xffffffe0))
-		return;
-
-	if(write_cache_len[id])
-	{
-		if(Phpoc.command(F("tcp%u send"), id) >= 0)
-			Phpoc.write(write_cache_buf[id], write_cache_len[id]);
-		write_cache_len[id] = 0;
-	}
-
-	if(Phpoc.command(F("tcp%u get state"), id) <= 0)
-		state_32ms[id] = 0;
-	else
-		state_32ms[id] = Phpoc.readInt();
-
-	if(Phpoc.command(F("tcp%u get rxlen"), id) <= 0)
-		rxlen_32ms[id] = 0;
-	else
-		rxlen_32ms[id] = Phpoc.readInt();
-
-	tick_32ms[id] = millis() & 0xffffffe0;
+	return Sppc.sppc_request(vsp_buf, cmd_len);
 }
-#endif
+
+uint16_t PhpocClient::command(const char *format, ...)
+{
+	char vsp_buf[VSP_COUNT_LIMIT];
+	va_list args;
+	int cmd_len;
+
+	if(Sppc.flags & PF_SYNC_V1)
+		return 0;
+
+	cmd_len = sppc_sprintf(vsp_buf, F("tcp%u "), sock_id);
+
+	va_start(args, format);
+	cmd_len += sppc_vsprintf(vsp_buf + cmd_len, format, args);
+	va_end(args);
+
+	return Sppc.sppc_request(vsp_buf, cmd_len);
+}
 
 int PhpocClient::connectSSL_ipstr(const char *ipstr, uint16_t port)
 {
@@ -109,62 +93,62 @@ int PhpocClient::connectSSL_ipstr(const char *ipstr, uint16_t port)
 
 	sock_id = SOCK_ID_SSL;
 
-	/* - crypto computation time
-	 *   2048bit RSA public key op  : 16ms  (client_key_exchange)
-	 *   2048bit RSA private key op : 404ms (certificate_verify)
-	 * - spi_wait time should be longer than crypto computation time.
-	 * - if debug_ssl is ON & fdc0_txbuf_size is 0, spi_wait_ms should be set 700
-	 */
-	Phpoc.spi_wait_ms = 600; /* 0.6 second */
-
-	if(Phpoc.command(F("tcp%u get state"), sock_id) > 0)
+	if(!(init_flags & (1 << sock_id)))
 	{
-		if(Phpoc.readInt() == TCP_CLOSED)
-		{
-#ifdef INCLUDE_PHPOC_CACHE
-			if(read_cache_len[sock_id])
-				goto _sock_na;
+		Phpoc.command(F("tcp%u ioctl close"), sock_id);
+		init_flags |= (1 << sock_id);
+		goto _skip_check_sock;
+	}
+
+#ifdef INCLUDE_NET_CACHE
+	nc_update(sock_id, NC_FLAG_RENEW_RXLEN | NC_FLAG_RENEW_STATE);
+	state = nc_tcp_state[sock_id];
+#else
+	state = Phpoc.tcpIoctlReadInt(F("state"), sock_id);
 #endif
 
-			if(Phpoc.command(F("tcp%u get rxlen"), sock_id) <= 0)
-				goto _sock_na;
-
-			if(Phpoc.readInt())
-				goto _sock_na;
-		}
-		else
-			goto _sock_na;
-	}
-	else
+	/* Phpoc/Sppc.command() function returns 0 on error.
+	 * we should check Sppc.errno if state is 0(TCP_CLOSED)
+	 */
+	if((state != TCP_CLOSED) || Sppc.errno || available())
 	{
-_sock_na:
 #ifdef PF_LOG_NET
-		if((Phpoc.flags & PF_LOG_NET) && Serial)
+		if((Sppc.flags & PF_LOG_NET) && Serial)
 			Serial.println(F("log> phpoc_client: SSL socket not available"));
 #endif
 		return 0;
 	}
 
+_skip_check_sock:
+
+	if(conn_flags & (1 << sock_id))
+	{
 #ifdef PF_LOG_NET
-	if((Phpoc.flags & PF_LOG_NET) && Serial)
-		Serial.print(F("log> phpoc_client: connectSSL >> "));
+		if((Sppc.flags & PF_LOG_NET) && Serial)
+			sppc_printf(F("log> phpoc_client: closed %d\r\n"), sock_id);
+#endif
+		conn_flags &= ~(1 << sock_id);
+	}
+
+#ifdef PF_LOG_NET
+	if((Sppc.flags & PF_LOG_NET) && Serial)
+		sppc_printf(F("log> phpoc_client: connectSSL %d >> "), sock_id);
 #endif
 
-	if(Phpoc.command(F("tcp%u connect %s %u"), sock_id, ipstr, port) < 0)
-		return 0;
+	Phpoc.command(F("tcp%u ioctl set api ssl"), sock_id);
 
-	if(Phpoc.command(F("tcp%u set ssl method tls1_client"), sock_id) < 0)
-		return 0;
+#ifdef INCLUDE_LIB_V1
+	if(Sppc.flags & PF_SYNC_V1)
+		Phpoc.command(F("tcp%u ioctl set ssl method tls1_client"), sock_id);
+	else
+#endif
+		Phpoc.command(F("tcp%u ioctl set ssl method client"), sock_id);
+
+	Phpoc.command(F("tcp%u connect %s %u"), sock_id, ipstr, port);
 
 	while(1)
 	{
-		if(Phpoc.command(F("tcp%u get state"), sock_id) <= 0)
-		{
-			state = 0;
-			break;
-		}
-
-		state = Phpoc.readInt();
+		state = Phpoc.tcpIoctlReadInt(F("state"), sock_id);
 
 		if((state == TCP_CLOSED) || (state == SSL_CONNECTED))
 			break;
@@ -173,7 +157,7 @@ _sock_na:
 	}
 
 #ifdef PF_LOG_NET
-	if((Phpoc.flags & PF_LOG_NET) && Serial)
+	if((Sppc.flags & PF_LOG_NET) && Serial)
 	{
 		if(state)
 			Serial.println(F("success"));
@@ -182,31 +166,22 @@ _sock_na:
 	}
 #endif
 
-#ifdef INCLUDE_PHPOC_CACHE
-	rxlen_32ms[sock_id] = 0;
-	read_cache_len[sock_id] = 0;
-	write_cache_len[sock_id] = 0;
-
 	if(state)
 	{
-		state_32ms[sock_id] = SSL_CONNECTED;
-		return 1;
-	}
-	else
-	{
-		state_32ms[sock_id] = TCP_CLOSED;
-		sock_id = MAX_SOCK_TCP;
-		return 0;
-	}
-#else
-	if(state)
-		return 1;
-	else
-	{
-		sock_id = MAX_SOCK_TCP;
-		return 0;
-	}
+#ifdef INCLUDE_NET_CACHE
+		nc_init(sock_id, SSL_CONNECTED);
 #endif
+		conn_flags |= (1 << sock_id);
+		return 1;
+	}
+	else
+	{
+#ifdef INCLUDE_NET_CACHE
+		nc_init(sock_id, TCP_CLOSED);
+#endif
+		sock_id = MAX_SOCK_TCP;
+		return 0;
+	}
 }
 
 int PhpocClient::connectSSL(IP6Address ip6addr, uint16_t port)
@@ -218,7 +193,7 @@ int PhpocClient::connectSSL(IPAddress ipaddr, uint16_t port)
 {
 	char ipstr[16]; /* x.x.x.x (7 bytes), xxx.xxx.xxx.xxx (15 bytes) */
 
-	Phpoc.sprintf(ipstr, F("%u.%u.%u.%u"), ipaddr[0], ipaddr[1], ipaddr[2], ipaddr[3]);
+	sppc_sprintf(ipstr, F("%u.%u.%u.%u"), ipaddr[0], ipaddr[1], ipaddr[2], ipaddr[3]);
 	return connectSSL_ipstr(ipstr, port);
 }
 
@@ -226,7 +201,7 @@ int PhpocClient::connectSSL(const char *host, uint16_t port)
 {
 	int len;
 
-	if(Phpoc.flags & PF_IP6)
+	if(Sppc.flags & PF_IP6)
 	{
 		IP6Address ip6addr;
 
@@ -264,61 +239,56 @@ int PhpocClient::connect_ipstr(const char *ipstr, uint16_t port)
 
 	for(sock_id = SOCK_ID_TCP; sock_id < MAX_SOCK_TCP; sock_id++)
 	{
-		if(Phpoc.command(F("tcp%u get state"), sock_id) > 0)
+		if(!(init_flags & (1 << sock_id)))
 		{
-			state = Phpoc.readInt();
+			Phpoc.command(F("tcp%u ioctl close"), sock_id);
+			init_flags |= (1 << sock_id);
+			break;
+		}
 
-			if(state == TCP_CLOSED)
-			{
-#ifdef INCLUDE_PHPOC_CACHE
-				if(read_cache_len[sock_id])
-					continue;
+#ifdef INCLUDE_NET_CACHE
+		nc_update(sock_id, NC_FLAG_RENEW_RXLEN | NC_FLAG_RENEW_STATE);
+		state = nc_tcp_state[sock_id];
+#else
+		state = Phpoc.tcpIoctlReadInt(F("state"), sock_id);
 #endif
 
-				if(Phpoc.command(F("tcp%u get rxlen"), sock_id) <= 0)
-					continue;
-
-				if(Phpoc.readInt())
-					continue;
-
-				break;
-			}
-		}
+		/* Phpoc/Sppc.command() function returns 0 on error.
+		 * we should check Sppc.errno if state is 0(TCP_CLOSED)
+		 */
+		if((state == TCP_CLOSED) && !Sppc.errno && !available())
+			break;
 	}
 
 	if(sock_id == MAX_SOCK_TCP)
 	{
 #ifdef PF_LOG_NET
-		if((Phpoc.flags & PF_LOG_NET) && Serial)
+		if((Sppc.flags & PF_LOG_NET) && Serial)
 			Serial.println(F("log> phpoc_client: socket not available"));
 #endif
 		return 0;
 	}
 
-#ifdef PF_LOG_NET
-	if((Phpoc.flags & PF_LOG_NET) && Serial)
+	if(conn_flags & (1 << sock_id))
 	{
-		Serial.print(F("log> phpoc_client: connect "));
-		Serial.print(sock_id);
-		Serial.print(F(" >> "));
+#ifdef PF_LOG_NET
+		if((Sppc.flags & PF_LOG_NET) && Serial)
+			sppc_printf(F("log> phpoc_client: closed %d\r\n"), sock_id);
+#endif
+		conn_flags &= ~(1 << sock_id);
 	}
+
+#ifdef PF_LOG_NET
+	if((Sppc.flags & PF_LOG_NET) && Serial)
+		sppc_printf(F("log> phpoc_client: connect %d >> "), sock_id);
 #endif
 
-	if(Phpoc.command(F("tcp%u set api tcp"), sock_id) < 0)
-		return 0;
-
-	if(Phpoc.command(F("tcp%u connect %s %u"), sock_id, ipstr, port) < 0)
-		return 0;
+	Phpoc.command(F("tcp%u ioctl set api tcp"), sock_id);
+	Phpoc.command(F("tcp%u connect %s %u"), sock_id, ipstr, port);
 
 	while(1)
 	{
-		if(Phpoc.command(F("tcp%u get state"), sock_id) <= 0)
-		{
-			state = 0;
-			break;
-		}
-
-		state = Phpoc.readInt();
+		state = Phpoc.tcpIoctlReadInt(F("state"), sock_id);
 
 		if((state == TCP_CLOSED) || (state == TCP_CONNECTED))
 			break;
@@ -327,7 +297,7 @@ int PhpocClient::connect_ipstr(const char *ipstr, uint16_t port)
 	}
 
 #ifdef PF_LOG_NET
-	if((Phpoc.flags & PF_LOG_NET) && Serial)
+	if((Sppc.flags & PF_LOG_NET) && Serial)
 	{
 		if(state)
 			Serial.println(F("success"));
@@ -336,31 +306,22 @@ int PhpocClient::connect_ipstr(const char *ipstr, uint16_t port)
 	}
 #endif
 
-#ifdef INCLUDE_PHPOC_CACHE
-	rxlen_32ms[sock_id] = 0;
-	read_cache_len[sock_id] = 0;
-	write_cache_len[sock_id] = 0;
-
 	if(state)
 	{
-		state_32ms[sock_id] = TCP_CONNECTED;
-		return 1;
-	}
-	else
-	{
-		state_32ms[sock_id] = TCP_CLOSED;
-		sock_id = MAX_SOCK_TCP;
-		return 0;
-	}
-#else
-	if(state)
-		return 1;
-	else
-	{
-		sock_id = MAX_SOCK_TCP;
-		return 0;
-	}
+#ifdef INCLUDE_NET_CACHE
+		nc_init(sock_id, TCP_CONNECTED);
 #endif
+		conn_flags |= (1 << sock_id);
+		return 1;
+	}
+	else
+	{
+#ifdef INCLUDE_NET_CACHE
+		nc_init(sock_id, TCP_CLOSED);
+#endif
+		sock_id = MAX_SOCK_TCP;
+		return 0;
+	}
 }
 
 int PhpocClient::connect(IP6Address ip6addr, uint16_t port)
@@ -372,7 +333,7 @@ int PhpocClient::connect(IPAddress ipaddr, uint16_t port)
 {
 	char ipstr[16]; /* x.x.x.x (7 bytes), xxx.xxx.xxx.xxx (15 bytes) */
 
-	Phpoc.sprintf(ipstr, F("%u.%u.%u.%u"), ipaddr[0], ipaddr[1], ipaddr[2], ipaddr[3]);
+	sppc_sprintf(ipstr, F("%u.%u.%u.%u"), ipaddr[0], ipaddr[1], ipaddr[2], ipaddr[3]);
 	return connect_ipstr(ipstr, port);
 }
 
@@ -380,7 +341,7 @@ int PhpocClient::connect(const char *host, uint16_t port)
 {
 	int len;
 
-	if(Phpoc.flags & PF_IP6)
+	if(Sppc.flags & PF_IP6)
 	{
 		IP6Address ip6addr;
 
@@ -421,35 +382,29 @@ size_t PhpocClient::write(const uint8_t *buf, size_t size)
 	if(sock_id >= MAX_SOCK_TCP)
 		return 0;
 
-#ifdef INCLUDE_PHPOC_CACHE
-	if(write_cache_len[sock_id] + size >= WRITE_CACHE_SIZE)
+#ifdef INCLUDE_NET_CACHE
+	return nc_write(sock_id, buf, size);
+#else /* INCLUDE_NET_CACHE */
+#ifdef INCLUDE_LIB_V1
+	if(Sppc.flags & PF_SYNC_V1)
 	{
-		if(write_cache_len[sock_id])
-		{
-			if(Phpoc.command(F("tcp%u send"), sock_id) >= 0)
-				Phpoc.write(write_cache_buf[sock_id], write_cache_len[sock_id]);
-			write_cache_len[sock_id] = 0;
-		}
+		Phpoc.command(F("tcp%u send"), sock_id);
 
-		if(size)
-		{
-			if(Phpoc.command(F("tcp%u send"), sock_id) >= 0)
-				Phpoc.write(buf, size);
-		}
-
-		return size;
+		if(!Sppc.errno)
+			return Phpoc.write(buf, size);
+		else
+			return 0;
 	}
 	else
+#endif
 	{
-		memcpy(write_cache_buf[sock_id] + write_cache_len[sock_id], buf, size);
-		write_cache_len[sock_id] += size;
-		return size;
+		Phpoc.write(buf, size);
+
+		if(!Sppc.errno)
+			return Phpoc.command(F("tcp%u send"), sock_id);
+		else
+			return 0;
 	}
-#else
-	if(Phpoc.command(F("tcp%u send"), sock_id) >= 0)
-		return Phpoc.write(buf, size);
-	else
-		return 0;
 #endif
 }
 
@@ -458,18 +413,11 @@ int PhpocClient::available()
 	if(sock_id >= MAX_SOCK_TCP)
 		return 0;
 
-#ifdef INCLUDE_PHPOC_CACHE
-	update_cache(sock_id);
-
-	return read_cache_len[sock_id] + rxlen_32ms[sock_id];
+#ifdef INCLUDE_NET_CACHE
+	nc_update(sock_id, 0);
+	return nc_read_len[sock_id] + nc_tcp_rxlen[sock_id];
 #else
-	int len;
-
-	if(Phpoc.command(F("tcp%u get rxlen"), sock_id) <= 0)
-		return 0;
-
-	len = Phpoc.readInt();
-	return len;
+	return Phpoc.tcpIoctlReadInt(F("rxlen"), sock_id);
 #endif
 }
 
@@ -478,31 +426,18 @@ int PhpocClient::read()
 	uint8_t byte;
 
 	if(sock_id >= MAX_SOCK_TCP)
-		return -1;
+		return EOF;
 
-#ifdef INCLUDE_PHPOC_CACHE
-	update_cache(sock_id);
-
-	if(read_cache_len[sock_id])
+#ifdef INCLUDE_NET_CACHE
+	return nc_read(sock_id);
+#else
+	if(Phpoc.command(F("tcp%u recv 1"), sock_id) > 0)
 	{
-		int cache_offset;
-
-		cache_offset = READ_CACHE_SIZE - read_cache_len[sock_id];
-		byte = read_cache_buf[sock_id][cache_offset];
-		read_cache_len[sock_id]--;
+		Phpoc.read(&byte, 1);
 		return (int)byte;
 	}
 	else
-		return -1;
-#else
-	int len;
-
-	len = Phpoc.command(F("tcp%u recv 1"), sock_id);
-	if(len <= 0)
-		return -1;
-
-	Phpoc.read(&byte, 1);
-	return (int)byte;
+		return EOF;
 #endif
 }
 
@@ -514,60 +449,20 @@ int PhpocClient::read(uint8_t *buf, size_t size)
 	if(!size)
 		return 0;
 
-#ifdef INCLUDE_PHPOC_CACHE
-	int copy_len, recv_len;
-
-	if(read_cache_len[sock_id])
-	{
-		int cache_offset;
-
-		if(size > read_cache_len[sock_id])
-		{
-			copy_len = read_cache_len[sock_id];
-			recv_len = size - read_cache_len[sock_id];
-		}
-		else
-		{
-			copy_len = size;
-			recv_len = 0;
-		}
-
-		cache_offset = READ_CACHE_SIZE - read_cache_len[sock_id];
-		memcpy(buf, read_cache_buf[sock_id] + cache_offset, copy_len);
-		read_cache_len[sock_id] -= copy_len;
-	}
-	else
-	{
-		copy_len = 0;
-		recv_len = size;
-	}
-
-	if(recv_len)
-	{
-		recv_len = Phpoc.command(F("tcp%u recv %u"), sock_id, recv_len);
-		if(recv_len <= 0)
-			return copy_len;
-
-		Phpoc.read(buf + copy_len, recv_len);
-
-		if(Phpoc.command(F("tcp%u get rxlen"), sock_id) <= 0)
-			rxlen_32ms[sock_id] = 0;
-		else
-			rxlen_32ms[sock_id] = Phpoc.readInt();
-	}
-
-	update_cache(sock_id);
-
-	return copy_len + recv_len;
+#ifdef INCLUDE_NET_CACHE
+	return nc_read(sock_id, buf, size);
 #else
 	int len;
 
 	len = Phpoc.command(F("tcp%u recv %u"), sock_id, size);
-	if(len <= 0)
-		return 0;
 
-	Phpoc.read(buf, len);
-	return len;
+	if(len > 0)
+	{
+		Phpoc.read(buf, len);
+		return len;
+	}
+	else
+		return 0;
 #endif
 }
 
@@ -580,68 +475,11 @@ char *PhpocClient::readLine()
 	if(sock_id >= MAX_SOCK_TCP)
 		return read_line_buf;
 
-	if((len = readLine((uint8_t *)read_line_buf, LINE_BUF_SIZE)))
+	if((len = readLine((uint8_t *)read_line_buf, SOCK_LINE_BUF_SIZE)))
 		read_line_buf[len] = 0x00;
 
 	return read_line_buf;
 }
-
-#ifdef INCLUDE_PHPOC_CACHE
-static int find_crlf(uint8_t *buf, int size)
-{
-	uint8_t crlf_count;
-	uint8_t *ptr;
-
-	ptr = buf;
-	crlf_count = 0;
-
-	while(size)
-	{
-		if(crlf_count)
-		{
-			if(*ptr == 0x0a)
-				return ptr + 1 - buf;
-			else
-				crlf_count = 0;
-		}
-		else
-		{
-			if(*ptr == 0x0d)
-				crlf_count++;
-		}
-
-		ptr++;
-		size--;
-	}
-
-	return 0;
-}
-
-int PhpocClient::read_line_from_cache(uint8_t *buf, size_t size)
-{
-	if(read_cache_len[sock_id])
-	{
-		int cache_offset, line_len;
-
-		cache_offset = READ_CACHE_SIZE - read_cache_len[sock_id];
-
-		line_len = find_crlf(read_cache_buf[sock_id] + cache_offset, read_cache_len[sock_id]);
-
-		if(line_len)
-		{
-			if(line_len > size)
-				line_len = size;
-
-			memcpy(buf, read_cache_buf[sock_id] + cache_offset, line_len);
-			read_cache_len[sock_id] -= line_len;
-		}
-
-		return line_len;
-	}
-	else
-		return 0;
-}
-#endif
 
 int PhpocClient::readLine(uint8_t *buf, size_t size)
 {
@@ -653,65 +491,23 @@ int PhpocClient::readLine(uint8_t *buf, size_t size)
 	if(!size)
 		return 0;
 
-#ifdef INCLUDE_PHPOC_CACHE
-	line_len = read_line_from_cache(buf, size);
+#ifdef INCLUDE_NET_CACHE
+	return nc_read_line(sock_id, buf, size);
+#else /* INCLUDE_NET_CACHE */
 
-	if(!line_len)
+#ifdef INCLUDE_LIB_V1
+	if(Sppc.flags & PF_SYNC_V1)
 	{
-		uint8_t *cache_ptr;
-		int cache_offset;
+		Phpoc.command(F("tcp%u ioctl get rxlen 0d0a"), sock_id);
 
-		if(read_cache_len[sock_id] == READ_CACHE_SIZE)
-			goto _flush_cache;
-
-		cache_offset = READ_CACHE_SIZE - read_cache_len[sock_id];
-
-		rxlen = Phpoc.command(F("tcp%u recv %u"), sock_id, cache_offset);
-		if(rxlen < 0)
+		if(!Sppc.errno)
+			line_len = Phpoc.readInt();
+		else
 			return 0;
-
-		if(rxlen)
-		{
-			cache_ptr = read_cache_buf[sock_id] + cache_offset;
-			memcpy(cache_ptr - rxlen, cache_ptr, read_cache_len[sock_id]);
-
-			cache_offset -= rxlen;
-
-			Phpoc.read(read_cache_buf[sock_id] + cache_offset + read_cache_len[sock_id], rxlen);
-			read_cache_len[sock_id] += rxlen;
-
-			if(Phpoc.command(F("tcp%u get rxlen"), sock_id) <= 0)
-				rxlen_32ms[sock_id] = 0;
-			else
-				rxlen_32ms[sock_id] = Phpoc.readInt();
-
-			line_len = read_line_from_cache(buf, size);
-
-			if(!line_len)
-			{
-				if(read_cache_len[sock_id] == READ_CACHE_SIZE)
-				{
-_flush_cache:
-					line_len = read_cache_len[sock_id];
-
-					if(line_len > size)
-						line_len = size;
-
-					memcpy(buf, read_cache_buf[sock_id], line_len);
-					read_cache_len[sock_id] -= line_len;
-				}
-			}
-		}
 	}
-
-	update_cache(sock_id);
-
-	return line_len;
-#else
-	if(Phpoc.command(F("tcp%u get rxlen 0d0a"), sock_id) <= 0)
-		return 0;
-
-	line_len = Phpoc.readInt();
+	else
+#endif
+		line_len = Phpoc.command(F("tcp%u ioctl get rxlen \r\n"), sock_id);
 
 	if(line_len)
 	{
@@ -719,45 +515,46 @@ _flush_cache:
 			line_len = size;
 
 		rxlen = Phpoc.command(F("tcp%u recv %u"), sock_id, line_len);
-		if(rxlen <= 0)
-			return 0;
 
-		Phpoc.read(buf, rxlen);
-		return rxlen;
+		if(rxlen > 0)
+		{
+			Phpoc.read(buf, rxlen);
+			return rxlen;
+		}
+		else
+			return 0;
 	}
 	else
 		return 0;
 #endif
 }
 
+int PhpocClient::availableForWrite(void)
+{
+	return Phpoc.tcpIoctlReadInt(F("txfree"), sock_id);
+}
+
 int PhpocClient::peek()
 {
 	uint8_t byte;
-	int len;
 
 	if(sock_id >= MAX_SOCK_TCP)
-		return -1;
+		return EOF;
 
-#ifdef INCLUDE_PHPOC_CACHE
-	update_cache(sock_id);
+#ifdef INCLUDE_NET_CACHE
+	return nc_peek(sock_id);
+#else
+	int len;
 
-	if(read_cache_len[sock_id])
+	len = Phpoc.command(F("tcp%u peek 1"), sock_id);
+
+	if(len > 0)
 	{
-		int cache_offset;
-
-		cache_offset = READ_CACHE_SIZE - read_cache_len[sock_id];
-		byte = read_cache_buf[sock_id][cache_offset];
+		Phpoc.read(&byte, 1);
 		return (int)byte;
 	}
 	else
-		return -1;
-#else
-	len = Phpoc.command(F("tcp%u peek 1"), sock_id);
-	if(len <= 0)
-		return -1;
-
-	Phpoc.read(&byte, 1);
-	return (int)byte;
+		return EOF;
 #endif
 }
 
@@ -766,16 +563,31 @@ void PhpocClient::flush()
 	if(sock_id >= MAX_SOCK_TCP)
 		return;
 
-#ifdef INCLUDE_PHPOC_CACHE
-	update_cache(sock_id);
+#ifdef INCLUDE_NET_CACHE
+	nc_update(sock_id, NC_FLAG_FLUSH_WRITE);
 #endif
 
-	while(1)
+#ifdef INCLUDE_LIB_V1
+	if(Sppc.flags & PF_SYNC_V1)
 	{
-		if(Phpoc.command(F("tcp%u get txlen"), sock_id) <= 0)
-			break;
-		if(!Phpoc.readInt())
-			break;
+		while(Phpoc.tcpIoctlReadInt(F("txlen"), sock_id))
+			delay(10);
+	}
+	else
+#endif
+	{
+		int txfree, txbuf;
+
+		while(1)
+		{
+			txfree = Phpoc.tcpIoctlReadInt(F("txfree"), sock_id);
+			txbuf = Phpoc.tcpIoctlReadInt(F("txbuf"), sock_id);
+
+			if(txfree == txbuf)
+				break;
+
+			delay(10);
+		}
 	}
 }
 
@@ -785,39 +597,25 @@ void PhpocClient::stop()
 		return;
 
 #ifdef PF_LOG_NET
-	if((Phpoc.flags & PF_LOG_NET) && Serial)
-	{
-		Serial.print(F("log> phpoc_client: close "));
-		Serial.print(sock_id);
-		Serial.print(F(" >> "));
-	}
+	if((Sppc.flags & PF_LOG_NET) && Serial)
+		sppc_printf(F("log> phpoc_client: close %d >> "), sock_id);
 #endif
 
-  if(Phpoc.command(F("tcp%u close"), sock_id) < 0)
-		return;
+  Phpoc.command(F("tcp%u ioctl close"), sock_id);
 
-	while(1)
-	{
-		if(Phpoc.command(F("tcp%u get state"), sock_id) <= 0)
-			break;
-
-		if(Phpoc.readInt() == TCP_CLOSED)
-			break;
-
+	while(Phpoc.tcpIoctlReadInt(F("state"), sock_id) != TCP_CLOSED)
 		delay(10);
-	}
 
-#ifdef INCLUDE_PHPOC_CACHE
-	state_32ms[sock_id] = TCP_CLOSED;
-	rxlen_32ms[sock_id] = 0;
-	read_cache_len[sock_id] = 0;
-	write_cache_len[sock_id] = 0;
+#ifdef INCLUDE_NET_CACHE
+	nc_init(sock_id, TCP_CLOSED);
 #endif
 
 #ifdef PF_LOG_NET
-	if((Phpoc.flags & PF_LOG_NET) && Serial)
+	if((Sppc.flags & PF_LOG_NET) && Serial)
 		Serial.println(F("closed"));
 #endif
+
+	conn_flags &= ~(1 << sock_id);
 
 	sock_id = MAX_SOCK_TCP;
 }
@@ -829,24 +627,29 @@ uint8_t PhpocClient::connected()
 	if(sock_id >= MAX_SOCK_TCP)
 		return false;
 
-#ifdef INCLUDE_PHPOC_CACHE
-	update_cache(sock_id);
+#ifdef INCLUDE_NET_CACHE
+	nc_update(sock_id, 0);
+	state = nc_tcp_state[sock_id];
 
-	state = state_32ms[sock_id];
-
-	if((state == TCP_CONNECTED) || (state == SSL_CONNECTED) || (state == SSH_CONNECTED))
+	/* connected() should return true if ssl renegotiation is in progress */
+	if((state == TCP_CONNECTED) || (state > SSL_STOP) || (state == SSH_CONNECTED))
 		return true;
 	else
 	{
-		if(read_cache_len[sock_id] + rxlen_32ms[sock_id])
+		if(available())
 			return true;
 		else
-			return false;
+		{
+			nc_update(sock_id, NC_FLAG_RENEW_RXLEN);
+
+			if(available())
+				return true;
+			else
+				return false;
+		}
 	}
 #else
-	if(Phpoc.command(F("tcp%u get state"), sock_id) <= 0)
-		return false;
-	state = Phpoc.readInt();
+	state = Phpoc.tcpIoctlReadInt(F("state"), sock_id);
 
 	if((state == TCP_CONNECTED) || (state == SSL_CONNECTED) || (state == SSH_CONNECTED))
 		return true;

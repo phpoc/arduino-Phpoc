@@ -32,15 +32,13 @@
 #ifndef PhpocEmail_h
 #define PhpocEmail_h
 
-#ifndef WRITE_CACHE_SIZE
-#define WRITE_CACHE_SIZE 32
-#endif
+#define EMAIL_WRITE_CACHE_SIZE 32
 
 class PhpocEmail : public Print
 {
 	private:
 		uint8_t write_cache_len;
-		uint8_t write_cache_buf[WRITE_CACHE_SIZE];
+		uint8_t write_cache_buf[EMAIL_WRITE_CACHE_SIZE];
 
 	public:
 		void setOutgoingServer(const char *host, uint16_t port = 587);
@@ -56,7 +54,7 @@ class PhpocEmail : public Print
 		void beginMessage();
 		void endMessage();
 		virtual size_t write(uint8_t byte);
-		virtual size_t write(const uint8_t *buf, size_t size);
+		virtual size_t write(const uint8_t *wbuf, size_t wlen);
 		uint8_t send();
 		using Print::write;
 };

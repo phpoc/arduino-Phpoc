@@ -31,19 +31,45 @@
 
 #include <Phpoc.h>
 
+int PhpocDateTime::rtc_date(void)
+{
+	int len;
+
+	if(Phpoc.command(F("rtc0 ioctl get date")) > 0)
+	{
+		if((len = Phpoc.read((uint8_t *)date_buf, DATE_BUF_SIZE - 1)) > 0)
+		{
+			date_buf[len] = 0x00;
+			return len;
+		}
+	}
+
+	return 0;
+}
+
 char *PhpocDateTime::date(const char *format)
 {
 	int len;
 
 	if(format && format[0])
 	{
-		if(Phpoc.command(F("sys date format")) >= 0)
+#ifdef INCLUDE_LIB_V1
+		if(Sppc.flags & PF_SYNC_V1)
+		{
+			if(Phpoc.command(F("sys date format")) >= 0)
+				Phpoc.write(format);
+		}
+		else
+#endif
+		{
 			Phpoc.write(format);
+			Phpoc.command(F("sys date format"));
+		}
 	}
 
 	if(Phpoc.command(F("sys date")) > 0)
 	{
-		if((len = Phpoc.read((uint8_t *)date_buf, DATE_BUF_SIZE - 1)) >= 0)
+		if((len = Phpoc.read((uint8_t *)date_buf, DATE_BUF_SIZE - 1)) > 0)
 			date_buf[len] = 0x00;
 		else
 			date_buf[0] = 0x00;
@@ -56,10 +82,20 @@ char *PhpocDateTime::date(const char *format)
 
 char *PhpocDateTime::date(const __FlashStringHelper *format)
 {
-	if(format && pgm_read_byte(0))
+	if(format && pgm_read_byte(format))
 	{
-		if(Phpoc.command(F("sys date format")) >= 0)
+#ifdef INCLUDE_LIB_V1
+		if(Sppc.flags & PF_SYNC_V1)
+		{
+			if(Phpoc.command(F("sys date format")) >= 0)
+				Phpoc.write(format);
+		}
+		else
+#endif
+		{
 			Phpoc.write(format);
+			Phpoc.command(F("sys date format"));
+		}
 	}
 
 	return date();
@@ -67,57 +103,154 @@ char *PhpocDateTime::date(const __FlashStringHelper *format)
 
 uint8_t PhpocDateTime::hour()
 {
-	if(Phpoc.command(F("sys rtc get hour")) > 0)
-		return Phpoc.readInt();
+#ifdef INCLUDE_LIB_V1
+	if(Sppc.flags & PF_SYNC_V1)
+	{
+		if(Phpoc.command(F("sys rtc get hour")) > 0)
+			return Phpoc.readInt();
+		else
+			return 0;
+	}
 	else
-		return 0;
+#endif
+	{
+		if(rtc_date() < 14)
+			return 0;
+
+		date_buf[10] = 0x00;
+		return atoi(date_buf + 8);
+	}
 }
 
 uint8_t PhpocDateTime::minute()
 {
-	if(Phpoc.command(F("sys rtc get minute")) > 0)
-		return Phpoc.readInt();
+#ifdef INCLUDE_LIB_V1
+	if(Sppc.flags & PF_SYNC_V1)
+	{
+		if(Phpoc.command(F("sys rtc get minute")) > 0)
+			return Phpoc.readInt();
+		else
+			return 0;
+	}
 	else
-		return 0;
+#endif
+	{
+		if(rtc_date() < 14)
+			return 0;
+
+		date_buf[12] = 0x00;
+		return atoi(date_buf + 10);
+	}
 }
 
 uint8_t PhpocDateTime::second()
 {
-	if(Phpoc.command(F("sys rtc get second")) > 0)
-		return Phpoc.readInt();
+#ifdef INCLUDE_LIB_V1
+	if(Sppc.flags & PF_SYNC_V1)
+	{
+		if(Phpoc.command(F("sys rtc get second")) > 0)
+			return Phpoc.readInt();
+		else
+			return 0;
+	}
 	else
-		return 0;
+#endif
+	{
+		if(rtc_date() < 14)
+			return 0;
+
+		date_buf[14] = 0x00;
+		return atoi(date_buf + 12);
+	}
 }
 
 uint8_t PhpocDateTime::day()
 {
-	if(Phpoc.command(F("sys rtc get day")) > 0)
-		return Phpoc.readInt();
+#ifdef INCLUDE_LIB_V1
+	if(Sppc.flags & PF_SYNC_V1)
+	{
+		if(Phpoc.command(F("sys rtc get day")) > 0)
+			return Phpoc.readInt();
+		else
+			return 0;
+	}
 	else
-		return 0;
+#endif
+	{
+		if(rtc_date() < 14)
+			return 0;
+
+		date_buf[8] = 0x00;
+		return atoi(date_buf + 6);
+	}
 }
 
 uint8_t PhpocDateTime::dayofWeek()
 {
-	if(Phpoc.command(F("sys rtc get wday")) > 0)
-		return Phpoc.readInt();
+#ifdef INCLUDE_LIB_V1
+	if(Sppc.flags & PF_SYNC_V1)
+	{
+		if(Phpoc.command(F("sys rtc get wday")) > 0)
+			return Phpoc.readInt();
+		else
+			return 0;
+	}
 	else
-		return 0;
+#endif
+	{
+		int wday;
+
+		wday = Phpoc.command(F("rtc0 ioctl get wday"));
+
+		if(wday < 0)
+			return 0;
+
+		if(wday == 0)
+			wday = 7;
+
+		return wday;
+	}
 }
 
 uint8_t PhpocDateTime::month()
 {
-	if(Phpoc.command(F("sys rtc get month")) > 0)
-		return Phpoc.readInt();
+#ifdef INCLUDE_LIB_V1
+	if(Sppc.flags & PF_SYNC_V1)
+	{
+		if(Phpoc.command(F("sys rtc get month")) > 0)
+			return Phpoc.readInt();
+		else
+			return 0;
+	}
 	else
-		return 0;
+#endif
+	{
+		if(rtc_date() < 14)
+			return 0;
+
+		date_buf[6] = 0x00;
+		return atoi(date_buf + 4);
+	}
 }
 
 uint16_t PhpocDateTime::year()
 {
-	if(Phpoc.command(F("sys rtc get year")) > 0)
-		return Phpoc.readInt();
+#ifdef INCLUDE_LIB_V1
+	if(Sppc.flags & PF_SYNC_V1)
+	{
+		if(Phpoc.command(F("sys rtc get year")) > 0)
+			return Phpoc.readInt();
+		else
+			return 0;
+	}
 	else
-		return 0;
+#endif
+	{
+		if(rtc_date() < 14)
+			return 0;
+
+		date_buf[4] = 0x00;
+		return atoi(date_buf + 0);
+	}
 }
 

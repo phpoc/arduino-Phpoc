@@ -38,6 +38,7 @@ class PhpocDateTime
 {
 	private:
 		char date_buf[DATE_BUF_SIZE];
+		int rtc_date(void);
 
 	public:
 		char *date(const char *format = NULL);

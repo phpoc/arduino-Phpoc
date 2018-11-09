@@ -32,17 +32,144 @@
 #include <Phpoc.h>
 
 uint16_t PhpocServer::server_port[MAX_SOCK_TCP];
+const char *PhpocServer::server_ws_path[MAX_SOCK_TCP];
 
 PhpocServer::PhpocServer(uint16_t port)
 {
 	listen_port = port;
+	server_api = SERVER_API_TCP;
 }
 
-void PhpocServer::session_loop_tcp()
+void PhpocServer::listen()
 {
-	uint8_t sock_id, listen_count, state;
+	uint8_t sock_id, state;
 
-	listen_count = 0;
+	/* create listening socket & initialize NC(Net Cache) */
+	for(sock_id = SOCK_ID_TCP; sock_id < MAX_SOCK_TCP; sock_id++)
+	{
+		PhpocClient client(sock_id);
+
+		if(!(client.init_flags & (1 << sock_id)))
+		{
+			Phpoc.command(F("tcp%u ioctl close"), sock_id);
+			client.init_flags |= (1 << sock_id);
+			break;
+		}
+
+#ifdef INCLUDE_NET_CACHE
+		nc_update(sock_id, 0);
+		state = nc_tcp_state[sock_id];
+#else
+		state = Phpoc.tcpIoctlReadInt(F("state"), sock_id);
+#endif
+
+		if((state == TCP_CLOSED) && !Sppc.errno && !client.available())
+			break;
+	}
+
+	if(sock_id == MAX_SOCK_TCP)
+	{
+#ifdef PF_LOG_NET
+		//if((Sppc.flags & PF_LOG_NET) && Serial)
+		//	sppc_printf(F("log> phpoc_server : socket not available\r\n"));
+#endif
+		return;
+	}
+
+	switch(server_api)
+	{
+		case SERVER_API_TCP:
+			Phpoc.command(F("tcp%u ioctl set api tcp"), sock_id);
+			break;
+
+		case SERVER_API_TELNET:
+			Phpoc.command(F("tcp%u ioctl set api telnet"), sock_id);
+			break;
+
+		case SERVER_API_WS:
+			Phpoc.command(F("tcp%u ioctl set api ws"), sock_id);
+			Phpoc.command(F("tcp%u ioctl set ws path %s"), sock_id, listen_ws_path);
+			Phpoc.command(F("tcp%u ioctl set ws proto %s"), sock_id, listen_ws_proto);
+			Phpoc.command(F("tcp%u ioctl set ws mode %d"), sock_id, ws_mode);
+			break;
+	}
+
+#ifdef INCLUDE_LIB_V1
+	if(Sppc.flags & PF_SYNC_V1)
+		Phpoc.command(F("tcp%u listen %u"), sock_id, listen_port);
+	else
+#endif
+	{
+		Phpoc.command(F("tcp%u bind ANY %u"), sock_id, listen_port);
+		Phpoc.command(F("tcp%u listen"), sock_id);
+	}
+
+	if(!Sppc.errno)
+	{
+		server_port[sock_id] = listen_port;
+
+		if(server_api == SERVER_API_WS)
+			server_ws_path[sock_id] = listen_ws_path;
+
+#ifdef PF_LOG_NET
+		if((Sppc.flags & PF_LOG_NET) && Serial)
+			sppc_printf(F("log> phpoc_server : listen %d/%d\r\n"), sock_id, listen_port);
+#endif
+
+#ifdef INCLUDE_NET_CACHE
+		nc_init(sock_id, TCP_LISTEN);
+#endif
+	}
+}
+
+void PhpocServer::begin()
+{
+	server_api = SERVER_API_TCP;
+	listen();
+}
+
+void PhpocServer::beginTelnet()
+{
+	server_api = SERVER_API_TELNET;
+	listen();
+}
+
+void PhpocServer::beginWebSocket(const char *path, const char *proto)
+{
+	if(!path || !path[0])
+		return;
+
+	server_api = SERVER_API_WS;
+	listen_ws_path = path;
+
+	if(proto && proto[0])
+		listen_ws_proto = proto;
+	else
+		listen_ws_proto = "text.phpoc";
+
+	listen();
+}
+
+void PhpocServer::beginWebSocketText(const char *path, const char *proto)
+{
+	ws_mode = 0;
+	beginWebSocket(path, proto);
+}
+
+void PhpocServer::beginWebSocketBinary(const char *path, const char *proto)
+{
+	ws_mode = 1;
+	beginWebSocket(path, proto);
+}
+
+void PhpocServer::accept()
+{
+	uint8_t sock_id, state, listening;
+
+	if(!listen_port)
+		return;
+
+	listening = 0;
 
 	/* find listening socket & close disconnected socket */
 	for(sock_id = SOCK_ID_TCP; sock_id < MAX_SOCK_TCP; sock_id++)
@@ -51,367 +178,66 @@ void PhpocServer::session_loop_tcp()
 		{
 			PhpocClient client(sock_id);
 
-#ifdef INCLUDE_PHPOC_CACHE
-			client.update_cache(sock_id);
-			state = client.state_32ms[sock_id];
-#else
-			if(Phpoc.command(F("tcp%u get state"), sock_id) > 0)
-				state = Phpoc.readInt();
-			else
+			if((server_api == SERVER_API_WS) && (listen_ws_path != server_ws_path[sock_id]))
 				continue;
+
+#ifdef INCLUDE_NET_CACHE
+			nc_update(sock_id, 0);
+			state = nc_tcp_state[sock_id];
+#else
+			state = Phpoc.tcpIoctlReadInt(F("state"), sock_id);
 #endif
 
 			if(state == TCP_LISTEN)
-				listen_count++;
+				listening = 1;
 			else
 			if((state < TCP_LISTEN) || (state > TCP_CONNECTED))
 			{
+				/* PHPoC firmware doesn't support tcp CLOSE_WAIT state */
 				if(!client.available())
 				{
-					client.stop();
+					client.stop(); /* conn_flags is cleared in function client.stop() */
 					server_port[sock_id] = 0;
+					server_ws_path[sock_id] = NULL;
 				}
 			}
-		}
-	}
-
-	if(listen_count)
-		return;
-
-	/* create listening socket & initialize phpoc cache */
-	for(sock_id = SOCK_ID_TCP; sock_id < MAX_SOCK_TCP; sock_id++)
-	{
-#ifdef INCLUDE_PHPOC_CACHE
-		PhpocClient::update_cache(sock_id);
-		state = PhpocClient::state_32ms[sock_id];
-#else
-		if(Phpoc.command(F("tcp%u get state"), sock_id) > 0)
-			state = Phpoc.readInt();
-		else
-			continue;
-#endif
-
-		if(state == TCP_CLOSED)
-		{
-			switch(server_api)
+			else
+			if(state == TCP_CONNECTED)
 			{
-				case SERVER_API_TCP:
-					if(Phpoc.command(F("tcp%u set api tcp"), sock_id) < 0)
-						continue;
-					break;
-
-				case SERVER_API_TELNET:
-					if(Phpoc.command(F("tcp%u set api telnet"), sock_id) < 0)
-						continue;
-					break;
-
-				case SERVER_API_WS:
-					if(Phpoc.command(F("tcp%u set api ws"), sock_id) < 0)
-						continue;
-					if(Phpoc.command(F("tcp%u set ws path %s"), sock_id, ws_path) < 0)
-						continue;
-					if(Phpoc.command(F("tcp%u set ws proto text.phpoc"), sock_id) < 0)
-						continue;
-					if(Phpoc.command(F("tcp%u set ws mode 0"), sock_id) < 0) /* Unicode text mode */
-						continue;
-					break;
-
-				default:
-					continue;
-			}
-
-			if(Phpoc.command(F("tcp%u listen %u"), sock_id, listen_port) >= 0)
-			{
-				server_port[sock_id] = listen_port;
-
-#ifdef PF_LOG_NET
-				if((Phpoc.flags & PF_LOG_NET) && Serial)
+				if(!(client.conn_flags & (1 << sock_id)))
 				{
-					Serial.print(F("log> phpoc_server: listen "));
-					Serial.print(sock_id);
-					Serial.print('/');
-					Serial.print(listen_port);
-					Serial.println();
+#ifdef PF_LOG_NET
+					if((Sppc.flags & PF_LOG_NET) && Serial)
+						sppc_printf(F("log> phpoc_server: connected %d\r\n"), sock_id);
+#endif
+					client.conn_flags |= (1 << sock_id);
 				}
-#endif
-
-#ifdef INCLUDE_PHPOC_CACHE
-				PhpocClient::state_32ms[sock_id] = TCP_LISTEN;
-				PhpocClient::rxlen_32ms[sock_id] = 0;
-				PhpocClient::read_cache_len[sock_id] = 0;
-				PhpocClient::write_cache_len[sock_id] = 0;
-#endif
-				return;
 			}
 		}
 	}
-}
 
-void PhpocServer::session_loop_ssl()
-{
-	PhpocClient client(SOCK_ID_SSL);
-	uint8_t sock_id, state;
-	int len;
-
-	sock_id = SOCK_ID_SSL;
-
-#ifdef INCLUDE_PHPOC_CACHE
-	client.update_cache(sock_id);
-	state = client.state_32ms[sock_id];
-#else
-	if(Phpoc.command(F("tcp%u get state"), sock_id) > 0)
-		state = Phpoc.readInt();
-	else
-		return;
-#endif
-
-	if(state == TCP_LISTEN)
-		return;
-	else
-	if((state < TCP_LISTEN) || ((state > TCP_CONNECTED) && (state < SSL_STOP)))
-	{
-		if(!client.available())
-		{
-			client.stop();
-			server_port[sock_id] = 0;
-		}
-	}
-
-	if(state == TCP_CLOSED)
-	{
-		if(Phpoc.command(F("tcp%u set api ssl"), sock_id) < 0)
-			return;
-
-		if(Phpoc.command(F("tcp%u set ssl method tls1_server"), sock_id) < 0)
-			return;
-
-		if(Phpoc.command(F("tcp%u listen %u"), sock_id, listen_port) >= 0)
-		{
-			server_port[sock_id] = listen_port;
-
-#ifdef PF_LOG_NET
-			if((Phpoc.flags & PF_LOG_NET) && Serial)
-			{
-				Serial.print(F("log> phpoc_server: listen "));
-				Serial.print(sock_id);
-				Serial.print('/');
-				Serial.print(listen_port);
-				Serial.println();
-			}
-#endif
-
-#ifdef INCLUDE_PHPOC_CACHE
-			PhpocClient::state_32ms[sock_id] = TCP_LISTEN;
-			PhpocClient::rxlen_32ms[sock_id] = 0;
-			PhpocClient::read_cache_len[sock_id] = 0;
-			PhpocClient::write_cache_len[sock_id] = 0;
-#endif
-			return;
-		}
-	}
-}
-
-void PhpocServer::session_loop_ssh()
-{
-	PhpocClient client(SOCK_ID_SSH);
-	uint8_t auth_buf[SSH_AUTH_SIZE + 1];
-	uint8_t sock_id, state;
-	int len;
-
-	sock_id = SOCK_ID_SSH;
-
-#ifdef INCLUDE_PHPOC_CACHE
-	client.update_cache(sock_id);
-	state = client.state_32ms[sock_id];
-#else
-	if(Phpoc.command(F("tcp%u get state"), sock_id) > 0)
-		state = Phpoc.readInt();
-	else
-		return;
-#endif
-
-	if(state == TCP_LISTEN)
-		return;
-	else
-	if((state < TCP_LISTEN) || ((state > TCP_CONNECTED) && (state < SSH_STOP)))
-	{
-		if(!client.available())
-		{
-			client.stop();
-			server_port[sock_id] = 0;
-		}
-	}
-	else
-	if(state == SSH_AUTH)
-	{
-		if(ssh_username)
-		{
-			if(Phpoc.command(F("tcp%u get ssh username"), sock_id) < 0)
-				return;
-
-			len = Phpoc.read(auth_buf, SSH_AUTH_SIZE);
-			auth_buf[len] = 0x00;
-
-			if(!len || strcmp((char *)auth_buf, ssh_username))
-			{
-				Phpoc.command(F("tcp%u set ssh auth reject"), sock_id);
-				return;
-			}
-		}
-
-		if(ssh_password)
-		{
-			if(Phpoc.command(F("tcp%u get ssh password"), sock_id) < 0)
-				return;
-
-			len = Phpoc.read(auth_buf, SSH_AUTH_SIZE);
-			auth_buf[len] = 0x00;
-
-			if(!len || strcmp((char *)auth_buf, ssh_password))
-			{
-				Phpoc.command(F("tcp%u set ssh auth reject"), sock_id);
-				return;
-			}
-		}
-
-		Phpoc.command(F("tcp%u set ssh auth accept"), sock_id);
-	}
-
-	if(state == TCP_CLOSED)
-	{
-		if(Phpoc.command(F("tcp%u set api ssh"), sock_id) < 0)
-			return;
-
-		if(Phpoc.command(F("tcp%u listen %u"), sock_id, listen_port) >= 0)
-		{
-			server_port[sock_id] = listen_port;
-
-#ifdef PF_LOG_NET
-			if((Phpoc.flags & PF_LOG_NET) && Serial)
-			{
-				Serial.print(F("log> phpoc_server: listen "));
-				Serial.print(sock_id);
-				Serial.print('/');
-				Serial.print(listen_port);
-				Serial.println();
-			}
-#endif
-
-#ifdef INCLUDE_PHPOC_CACHE
-			PhpocClient::state_32ms[sock_id] = TCP_LISTEN;
-			PhpocClient::rxlen_32ms[sock_id] = 0;
-			PhpocClient::read_cache_len[sock_id] = 0;
-			PhpocClient::write_cache_len[sock_id] = 0;
-#endif
-			return;
-		}
-	}
-}
-
-void PhpocServer::begin()
-{
-	server_api = SERVER_API_TCP;
-	session_loop_tcp();
-}
-
-void PhpocServer::beginTelnet()
-{
-	server_api = SERVER_API_TELNET;
-	session_loop_tcp();
-}
-
-void PhpocServer::beginWebSocket(const char *path)
-{
-	server_api = SERVER_API_WS;
-
-	if(path && path[0])
-		ws_path = path;
-	else
-		ws_path = "remocon";
-
-	session_loop_tcp();
-}
-
-void PhpocServer::beginSSL()
-{
-	server_api = SERVER_API_SSL;
-
-	/* - crypto computation time
-	 *   1024bit RSA private key op : 75ms
-	 *   2048bit RSA private key op : 404ms
-	 * - spi_wait time should be longer than crypto computation time.
-	 */
-	Phpoc.spi_wait_ms = 600; /* 0.6 second */
-
-	session_loop_ssl();
-}
-
-void PhpocServer::beginSSH(const char *username, const char *password)
-{
-	server_api = SERVER_API_SSH;
-
-	if(username && username[0])
-		ssh_username = username;
-	else
-		ssh_username = NULL;
-
-	if(password && password[0])
-		ssh_password = password;
-	else
-		ssh_password = NULL;
-
-	/* - crypto computation time
-	 *   DH new key : 270ms
-	 *   1024bit RSA private key op : 75ms
-	 *   2048bit RSA private key op : 404ms
-	 * - spi_wait time should be longer than crypto computation time.
-	 */
-	Phpoc.spi_wait_ms = 900; /* 0.9 second */
-
-	session_loop_ssh();
+	if(!listening)
+		listen();
 }
 
 PhpocClient PhpocServer::available()
 {
-	PhpocClient client;
 	uint8_t sock_id;
 
-	switch(server_api)
+	accept();
+
+	for(sock_id = SOCK_ID_TCP; sock_id < MAX_SOCK_TCP; sock_id++)
 	{
-		case SERVER_API_TCP:
-		case SERVER_API_TELNET:
-		case SERVER_API_WS:
-			session_loop_tcp();
+		if(listen_port == server_port[sock_id])
+		{
+			PhpocClient client(sock_id);
 
-			for(sock_id = SOCK_ID_TCP; sock_id < MAX_SOCK_TCP; sock_id++)
-			{
-				if(listen_port == server_port[sock_id])
-				{
-					client.sock_id = sock_id;
-
-					if(client.available())
-						return client;
-				}
-			}
-			break;
-
-		case SERVER_API_SSL:
-			session_loop_ssl();
-
-			client.sock_id = SOCK_ID_SSL;
+			if((server_api == SERVER_API_WS) && (listen_ws_path != server_ws_path[sock_id]))
+				continue;
 
 			if(client.available())
 				return client;
-			break;
-
-		case SERVER_API_SSH:
-			session_loop_ssh();
-
-			client.sock_id = SOCK_ID_SSH;
-
-			if(client.available())
-				return client;
-			break;
+		}
 	}
 
 	return PhpocClient(MAX_SOCK_TCP);
@@ -424,77 +250,32 @@ size_t PhpocServer::write(uint8_t byte)
 
 size_t PhpocServer::write(const uint8_t *buf, size_t size)
 {
-	PhpocClient client;
 	uint8_t sock_id, state;
 	uint16_t wlen;
 
 	wlen = 0;
 
-	switch(server_api)
+	accept();
+
+	for(sock_id = SOCK_ID_TCP; sock_id < MAX_SOCK_TCP; sock_id++)
 	{
-		case SERVER_API_TCP:
-		case SERVER_API_TELNET:
-		case SERVER_API_WS:
-			session_loop_tcp();
+		if(listen_port == server_port[sock_id])
+		{
+			PhpocClient client(sock_id);
 
-			for(sock_id = SOCK_ID_TCP; sock_id < MAX_SOCK_TCP; sock_id++)
-			{
-				if(listen_port == server_port[sock_id])
-				{
-					client.sock_id = sock_id;
+			if((server_api == SERVER_API_WS) && (listen_ws_path != server_ws_path[sock_id]))
+				continue;
 
-#ifdef INCLUDE_PHPOC_CACHE
-					PhpocClient::update_cache(sock_id);
-					state = PhpocClient::state_32ms[sock_id];
+#ifdef INCLUDE_NET_CACHE
+			nc_update(sock_id, 0);
+			state = nc_tcp_state[sock_id];
 #else
-					if(Phpoc.command(F("tcp%u get state"), sock_id) > 0)
-						state = Phpoc.readInt();
-					else
-						continue;
+			state = Phpoc.tcpIoctlReadInt(F("state"), sock_id);
 #endif
 
-					if(state == TCP_CONNECTED)
-						wlen += client.write(buf, size);
-				}
-			}
-			break;
-
-		case SERVER_API_SSL:
-			session_loop_ssl();
-
-			client.sock_id = SOCK_ID_SSL;
-#ifdef INCLUDE_PHPOC_CACHE
-			PhpocClient::update_cache(SOCK_ID_SSL);
-			state = PhpocClient::state_32ms[SOCK_ID_SSL];
-#else
-			if(Phpoc.command(F("tcp%u get state"), SOCK_ID_SSL) > 0)
-				state = Phpoc.readInt();
-			else
-				break;
-#endif
-
-			if(state == SSL_CONNECTED)
+			if(state == TCP_CONNECTED)
 				wlen += client.write(buf, size);
-			break;
-
-		case SERVER_API_SSH:
-			session_loop_ssh();
-
-			client.sock_id = SOCK_ID_SSH;
-
-#ifdef INCLUDE_PHPOC_CACHE
-			PhpocClient::update_cache(SOCK_ID_SSH);
-			state = PhpocClient::state_32ms[SOCK_ID_SSH];
-#else
-			if(Phpoc.command(F("tcp%u get state"), SOCK_ID_SSH) > 0)
-				state = Phpoc.readInt();
-			else
-				break;
-#endif
-
-			if(state == SSH_CONNECTED)
-				wlen += client.write(buf, size);
-			break;
+		}
 	}
 
 	return wlen;

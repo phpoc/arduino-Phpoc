@@ -34,127 +34,186 @@
 void PhpocEmail::setOutgoingServer(const char *host, uint16_t port)
 {
 	if(host && host[0])
-		Phpoc.command(F("smtp server %s %u"), host, port);
+		Phpoc.command(F("php smtp server %s %u"), host, port);
 	else
-		Phpoc.command(F("smtp server"));
+		Phpoc.command(F("php smtp server"));
 }
 
 void PhpocEmail::setOutgoingServer(const __FlashStringHelper *host, uint16_t port)
 {
 	if(host && pgm_read_byte(host))
-		Phpoc.command(F("smtp server %S %u"), host, port);
+		Phpoc.command(F("php smtp server %S %u"), host, port);
 	else
-		Phpoc.command(F("smtp server"));
+		Phpoc.command(F("php smtp server"));
 }
 
 void PhpocEmail::setOutgoingLogin(const char *username, const char *password)
 {
 	if(username && username[0] && password && password[0])
-		Phpoc.command(F("smtp login %s %s"), username, password);
+		Phpoc.command(F("php smtp login %s %s"), username, password);
 }
 
 void PhpocEmail::setOutgoingLogin(const __FlashStringHelper *username, const __FlashStringHelper *password)
 {
 	if(username && pgm_read_byte(username) && password && pgm_read_byte(password))
-		Phpoc.command(F("smtp login %S %S"), username, password);
+		Phpoc.command(F("php smtp login %S %S"), username, password);
 }
 
 void PhpocEmail::setFrom(const char *email, const char *name)
 {
-	if(Phpoc.command(F("smtp from")) >= 0)
-	{
-		if(email && email[0])
-			Phpoc.write(email);
-		else
-			return;
+	if(!email || !email[0])
+		return;
 
-		if(name && name[0])
-			Phpoc.write(name);
-		else
-			Phpoc.write(email);
+	if(!name || !name[0])
+		name = email;
+
+#ifdef INCLUDE_LIB_V1
+	if(Sppc.flags & PF_SYNC_V1)
+	{
+		Phpoc.command(F("php smtp from"));
+		Phpoc.write(email);
+		Phpoc.write(name);
+	}
+	else
+#endif
+	{
+		Phpoc.write(name);
+		Phpoc.command(F("php smtp from %s"), email);
 	}
 }
 
 void PhpocEmail::setFrom(const __FlashStringHelper *email, const __FlashStringHelper *name)
 {
-	if(Phpoc.command(F("smtp from")) >= 0)
-	{
-		if(email && pgm_read_byte(email))
-			Phpoc.write(email);
-		else
-			return;
+	if(!email || !pgm_read_byte(email))
+		return;
 
-		if(name && pgm_read_byte(name))
-			Phpoc.write(name);
-		else
-			Phpoc.write(email);
+	if(!name || !pgm_read_byte(name))
+		name = email;
+
+#ifdef INCLUDE_LIB_V1
+	if(Sppc.flags & PF_SYNC_V1)
+	{
+		Phpoc.command(F("php smtp from"));
+		Phpoc.write(email);
+		Phpoc.write(name);
+	}
+	else
+#endif
+	{
+		Phpoc.write(name);
+		Phpoc.command(F("php smtp from %S"), email);
 	}
 }
 
 void PhpocEmail::setTo(const char *email, const char *name)
 {
-	if(Phpoc.command(F("smtp to")) >= 0)
-	{
-		if(email && email[0])
-			Phpoc.write(email);
-		else
-			return;
+	if(!email || !email[0])
+		return;
 
-		if(name && name[0])
-			Phpoc.write(name);
-		else
-			Phpoc.write(email);
+	if(!name || !name[0])
+		name = email;
+
+#ifdef INCLUDE_LIB_V1
+	if(Sppc.flags & PF_SYNC_V1)
+	{
+		Phpoc.command(F("php smtp to"));
+		Phpoc.write(email);
+		Phpoc.write(name);
+	}
+	else
+#endif
+	{
+		Phpoc.write(name);
+		Phpoc.command(F("php smtp to %s"), email);
 	}
 }
 
 void PhpocEmail::setTo(const __FlashStringHelper *email, const __FlashStringHelper *name)
 {
-	if(Phpoc.command(F("smtp to")) >= 0)
-	{
-		if(email && pgm_read_byte(email))
-			Phpoc.write(email);
-		else
-			return;
+	if(!email || !pgm_read_byte(email))
+		return;
 
-		if(name && pgm_read_byte(name))
-			Phpoc.write(name);
-		else
-			Phpoc.write(email);
+	if(!name || !pgm_read_byte(name))
+		name = email;
+
+#ifdef INCLUDE_LIB_V1
+	if(Sppc.flags & PF_SYNC_V1)
+	{
+		Phpoc.command(F("php smtp to"));
+		Phpoc.write(email);
+		Phpoc.write(name);
+	}
+	else
+#endif
+	{
+		Phpoc.write(name);
+		Phpoc.command(F("php smtp to %S"), email);
 	}
 }
 
 void PhpocEmail::setSubject(const char *subject)
 {
-	if(subject && subject[0])
+	if(!subject || !subject[0])
+		return;
+
+#ifdef INCLUDE_LIB_V1
+	if(Sppc.flags & PF_SYNC_V1)
 	{
-		if(Phpoc.command(F("smtp subject")) >= 0)
-			Phpoc.write(subject);
+		Phpoc.command(F("php smtp subject"));
+		Phpoc.write(subject);
+	}
+	else
+#endif
+	{
+		Phpoc.write(subject);
+		Phpoc.command(F("php smtp subject"));
 	}
 }
 
 void PhpocEmail::setSubject(const __FlashStringHelper *subject)
 {
-	if(subject && pgm_read_byte(subject))
+	if(!subject || !pgm_read_byte(subject))
+		return;
+
+#ifdef INCLUDE_LIB_V1
+	if(Sppc.flags & PF_SYNC_V1)
 	{
-		if(Phpoc.command(F("smtp subject")) >= 0)
-			Phpoc.write(subject);
+		Phpoc.command(F("php smtp subject"));
+		Phpoc.write(subject);
+	}
+	else
+#endif
+	{
+		Phpoc.write(subject);
+		Phpoc.command(F("php smtp subject"));
 	}
 }
 
 void PhpocEmail::beginMessage()
 {
-	Phpoc.command(F("smtp data begin"));
+	Phpoc.command(F("php smtp data begin"));
 	write_cache_len = 0;
 }
 
 void PhpocEmail::endMessage()
 {
-	if(write_cache_len)
+	if(!write_cache_len)
+		return;
+
+#ifdef INCLUDE_LIB_V1
+	if(Sppc.flags & PF_SYNC_V1)
 	{
-		if(Phpoc.command(F("smtp data")) >= 0)
-			Phpoc.write(write_cache_buf, write_cache_len);
-		write_cache_len = 0;
+		Phpoc.command(F("php smtp data"));
+		Phpoc.write(write_cache_buf, write_cache_len);
 	}
+	else
+#endif
+	{
+		Phpoc.write(write_cache_buf, write_cache_len);
+		Phpoc.command(F("php smtp data"));
+	}
+
+	write_cache_len = 0;
 }
 
 size_t PhpocEmail::write(uint8_t byte)
@@ -162,30 +221,50 @@ size_t PhpocEmail::write(uint8_t byte)
 	return write(&byte, 1);
 }
 
-size_t PhpocEmail::write(const uint8_t *buf, size_t size)
+size_t PhpocEmail::write(const uint8_t *wbuf, size_t wlen)
 {
-	if(write_cache_len + size >= WRITE_CACHE_SIZE)
+	if(write_cache_len + wlen >= EMAIL_WRITE_CACHE_SIZE)
 	{
-		if(write_cache_len)
+#ifdef INCLUDE_LIB_V1
+		if(Sppc.flags & PF_SYNC_V1)
 		{
-			if(Phpoc.command(F("smtp data")) >= 0)
+			if(write_cache_len)
+			{
+				Phpoc.command(F("php smtp data"));
 				Phpoc.write(write_cache_buf, write_cache_len);
-			write_cache_len = 0;
-		}
+				write_cache_len = 0;
+			}
 
-		if(size)
+			if(wlen)
+			{
+				Phpoc.command(F("php smtp data"));
+				Phpoc.write(wbuf, wlen);
+			}
+		}
+		else
+#endif
 		{
-			if(Phpoc.command(F("smtp data")) >= 0)
-				Phpoc.write(buf, size);
+			if(write_cache_len)
+			{
+				Phpoc.write(write_cache_buf, write_cache_len);
+				Phpoc.command(F("php smtp data"));
+				write_cache_len = 0;
+			}
+
+			if(wlen)
+			{
+				Phpoc.write(wbuf, wlen);
+				Phpoc.command(F("php smtp data"));
+			}
 		}
 
-		return size;
+		return wlen;
 	}
 	else
 	{
-		memcpy(write_cache_buf + write_cache_len, buf, size);
-		write_cache_len += size;
-		return size;
+		memcpy(write_cache_buf + write_cache_len, wbuf, wlen);
+		write_cache_len += wlen;
+		return wlen;
 	}
 }
 
@@ -194,35 +273,54 @@ uint8_t PhpocEmail::send()
 	int len, status;
 
 #ifdef PF_LOG_APP
-	if(Phpoc.flags & PF_LOG_APP)
+	if(Sppc.flags & PF_LOG_APP)
 		Phpoc.logFlush(1);
 #endif
 
-	if(Phpoc.flags & PF_IP6)
-	{
-		if(Phpoc.command(F("smtp send ip6")) < 0)
-			return 0;
-	}
+#ifdef INCLUDE_LIB_V1
+	if(Sppc.flags & PF_SYNC_V1)
+		Phpoc.command(F("tcp0 ioctl close")); /* close tcp connection */
 	else
-	{
-		if(Phpoc.command(F("smtp send")) < 0)
-			return 0;
-	}
+#endif
+		/* we must close tcp pid here to enable opening /mmap/tcp0 in esmtp library by task0. */
+		Phpoc.command(F("tcp0 close")); /* close tcp pid */
+
+	if(Sppc.flags & PF_IP6)
+		Phpoc.command(F("php smtp send ip6"));
+	else
+		Phpoc.command(F("php smtp send"));
 
 	while(1)
 	{
 #ifdef PF_LOG_APP
-		if(Phpoc.flags & PF_LOG_APP)
+		if(Sppc.flags & PF_LOG_APP)
 			Phpoc.logPrint(1);
 #endif
 
-		if((len = Phpoc.command(F("smtp status"))) < 0)
-			return 0;
-
-		if(len)
+#ifdef INCLUDE_LIB_V1
+		if(Sppc.flags & PF_SYNC_V1)
 		{
-			status = Phpoc.readInt();
-			break;
+			len = Phpoc.command(F("php smtp status"));
+
+			if(Sppc.errno)
+				return 0;
+
+			if(len)
+			{
+				status = Phpoc.readInt();
+				break;
+			}
+		}
+		else
+#endif
+		{
+			status = Phpoc.command(F("php smtp status"));
+
+			if(Sppc.errno)
+				return 0;
+
+			if(status)
+				break;
 		}
 
 		delay(10);
@@ -230,11 +328,11 @@ uint8_t PhpocEmail::send()
 
 #ifdef PF_LOG_APP
 	delay(100);
-	if(Phpoc.flags & PF_LOG_APP)
+	if(Sppc.flags & PF_LOG_APP)
 		Phpoc.logPrint(1);
 #endif
 
-	if((status / 100) == 2)
+	if((status >= 200) && (status <= 299))
 		return 1; /* mail server respond 2xx */
 	else
 		return 0;

@@ -197,7 +197,7 @@ bool IP6Address::fromString(const char *str)
 
 char *IP6Address::toString(void)
 {
-	extern int phpoc_sprintf(char *str, const __FlashStringHelper *format, ...);
+	extern int sppc_sprintf(char *str, const __FlashStringHelper *format, ...);
 	const uint16_t *ptr16;
 	int omit, len;
 	char *str;
@@ -213,9 +213,9 @@ char *IP6Address::toString(void)
 
 		if(!ptr16[4] && (ptr16[5] == 0xffff))
 		{
-			str += phpoc_sprintf(str, F("::ffff:"));
+			str += sppc_sprintf(str, F("::ffff:"));
 			addr8 += 12;
-			str += phpoc_sprintf(str, F("%u.%u.%u.%u"), addr8[0], addr8[1], addr8[2], addr8[3]);
+			str += sppc_sprintf(str, F("%u.%u.%u.%u"), addr8[0], addr8[1], addr8[2], addr8[3]);
 			return ip6str_buf;
 		}
 	}
@@ -232,28 +232,28 @@ char *IP6Address::toString(void)
 				if(!omit)
 				{
 					if(len == 16)
-						str += phpoc_sprintf(str, F("::"));
+						str += sppc_sprintf(str, F("::"));
 					else
-						str += phpoc_sprintf(str, F(":"));
+						str += sppc_sprintf(str, F(":"));
 					omit = 1;;
 				}
 				if(omit == 2)
-					str += phpoc_sprintf(str, F("0:"));
+					str += sppc_sprintf(str, F("0:"));
 			}
 			else
 			{
 				if(omit == 1)
 					omit = 2;
-				str += phpoc_sprintf(str, F("%x:"), (*ptr16 >> 8) | (*ptr16 << 8));
+				str += sppc_sprintf(str, F("%x:"), (*ptr16 >> 8) | (*ptr16 << 8));
 			}
 			ptr16++;
 		}
 		else
 		{
 			if(*ptr16)
-				str += phpoc_sprintf(str, F("%x"), (*ptr16 >> 8) | (*ptr16 << 8));
+				str += sppc_sprintf(str, F("%x"), (*ptr16 >> 8) | (*ptr16 << 8));
 			else
-				str += phpoc_sprintf(str, F("0"));
+				str += sppc_sprintf(str, F("0"));
 			ptr16++;
 		}
 	}

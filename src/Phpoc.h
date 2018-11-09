@@ -34,80 +34,59 @@
 
 #include <IPAddress.h>
 #include <IP6Address.h>
+
+#define INCLUDE_LIB_V1
+
+#include <Sppc.h>
 #include <PhpocClient.h>
 #include <PhpocServer.h>
 #include <PhpocEmail.h>
 #include <PhpocDateTime.h>
 
-/* PHPoC flags */
-#define PF_SHIELD  0x01 // PHPoC shield installed
-#define PF_IP6     0x02 // IPv6 enabled
-#define PF_LOG_SPI 0x10
-#define PF_LOG_NET 0x20
-#define PF_LOG_APP 0x40
-
-/* PHPoC shield runtime error */
-#define PE_NO_SHIELD 1
-#define PE_TIMEOUT   2
-#define PE_PROTOCOL  3
-
-/* PHPoC shield state */
-#define PS_NO_SHIELD      0 // PHPoC Shield not found
-#define PS_NET_STOP       1 // ethernet enabled, but unplugged
-#define PS_NET_SCAN       2 // wifi enabled, but doesn't associated
-#define PS_NET_ADDRESS    3 // acquiring network address (ip address)
-#define PS_NET_CONNECTED  4 // ethernet or wifi ready
-
-#define VSP_COUNT_LIMIT 64 // string + NULL(0x00)
-
 class PhpocClass
 {
 	private:
 		/* SPI priviate member functions */
-		uint16_t spi_request(int req);
-		uint16_t spi_resync();
+#ifdef INCLUDE_LIB_V1
+		uint16_t spi_cmd_status(void);
+		uint16_t spi_cmd_sync(void);
+		uint16_t spi_resync(void);
+		int spi_cmd_txlen(void);
+		int spi_cmd_rxfree(void);
 		int spi_wait(int len, int ms);
-		int spi_cmd_status();
-		int spi_cmd_txlen();
-		int spi_cmd_rxbuf();
-		int spi_cmd_sync();
-		int spi_cmd_read(uint8_t *rbuf, size_t rlen);
-		int spi_cmd_write(const uint8_t *wbuf, size_t wlen, boolean pgm);
-		int api_write_command(const char *wbuf, int wlen);
-		int api_write_data(const uint8_t *wbuf, int wlen, boolean pgm);
+#endif
 
 	private:
-		int vsprintf(char *str, const __FlashStringHelper *format, va_list args);
-		int vsprintf(char *str, const char *format, va_list args);
-		IPAddress inet_aton(const char *str);
+#ifdef INCLUDE_LIB_V1
+		uint16_t php_request(const char *wbuf, int wlen);
+		int php_write_data(const uint8_t *wbuf, int wlen, boolean pgm);
+#endif
 
 	public:
-		int sprintf(char *str, const __FlashStringHelper *format, ...);
-		int sprintf(char *str, const char *format, ...);
+		int tcpIoctlReadInt(const __FlashStringHelper *args, int sock_id);
+		int getHostByName(const char *hostname, IPAddress &ipaddr, int wait_ms = 2000);
+		int getHostByName6(const char *hostname, IP6Address &ip6addr, int wait_ms = 2000);
+		uint16_t readInt(); /* read & parse short integer */
+		IPAddress readIP(); /* read & parse IP address */
+		IP6Address readIP6(); /* read & parse IPv6 address */
+		void logFlush(uint8_t id);
+		void logPrint(uint8_t id);
 
 	public:
-		uint8_t flags;
-		uint16_t spi_wait_ms;
-		uint16_t pkg_ver_id;
-		int command(const __FlashStringHelper *format, ...);
-		int command(const char *format, ...);
+		uint16_t command(const __FlashStringHelper *format, ...);
+		uint16_t command(const char *format, ...);
 		int write(const __FlashStringHelper *wstr);
 		int write(const char *wstr);
 		int write(const uint8_t *wbuf, size_t wlen);
 		int read(uint8_t *rbuf, size_t rlen);
-		uint16_t readInt();
-		IPAddress readIP();
-		IP6Address readIP6();
-		int getHostByName(const char *hostname, IPAddress &ipaddr, int wait_ms = 2000);
-		int getHostByName6(const char *hostname, IP6Address &ip6addr, int wait_ms = 2000);
-		void logFlush(uint8_t id);
-		void logPrint(uint8_t id);
+
+	public:
 		int beginIP4();
 		int beginIP6();
 
 	public:
 		/* Arduino Ethernet compatible public member functions */
-		int begin(uint8_t init_flags = 0x00);
+		int begin(uint16_t init_flags = 0x0000);
 		int maintain();
 		IPAddress localIP();
 		IPAddress subnetMask();

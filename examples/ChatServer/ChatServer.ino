@@ -1,6 +1,23 @@
-/* arduino chat server - 4 listening sessions */
+// Arduino Chat Server - 4 Listening Sessions
+//
+// PHPoC Shield and PHPoC WiFi Shield are Internet Shields for Arduino Uno and
+// Mega.
+//
+// This is an example of using Arduino Uno/Mega and PHPoC [WiFi] Shield to
+// create a TCP server that can connect up to 4 TCP clients simultaneously. It
+// distributes any incoming messages to all connected clients. The incoming
+// messages are also printed to the serial monitor.
+//
+// Arduino communicates with PHPoC [WiFi] Shield via pins 10, 11, 12 and 13 on
+// the Uno, and pins 10, 50, 51 and 52 on the Mega. Therefore, these pins CANNOT
+// be used for general I/O.
+//
+// This example code was written by Sollae Systems. It is released into the
+// public domain.
+//
+// Tutorial for the example is available here:
+// https://forum.phpoc.com/articles/tutorials/1232-arduino-tcp-chat-server
 
-#include <SPI.h>
 #include <Phpoc.h>
 
 PhpocServer server(23);
@@ -11,13 +28,16 @@ void setup() {
   while(!Serial)
     ;
 
+  // initialize PHPoC [WiFi] Shield:
   Phpoc.begin(PF_LOG_SPI | PF_LOG_NET);
   //Phpoc.begin();
 
+  // start listening for TCP clients:
   server.begin();
 
+  // print IP address of PHPoC [WiFi] Shield to serial monitor:
   Serial.print("Chat server address : ");
-  Serial.println(Phpoc.localIP());  
+  Serial.println(Phpoc.localIP());
 }
 
 void loop() {
@@ -37,7 +57,7 @@ void loop() {
     if (client.available() > 0) {
       // read the bytes incoming from the client:
       char thisChar = client.read();
-      // echo the bytes back to the client:
+      // echo the bytes back to all connected clients:
       server.write(thisChar);
       // echo the bytes to the server as well:
       Serial.write(thisChar);

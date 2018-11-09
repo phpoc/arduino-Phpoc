@@ -1,5 +1,5 @@
 #######################################
-# Syntax Coloring Map For PHPoC
+# Syntax Coloring Map For Phpoc
 #######################################
 
 #######################################
@@ -12,6 +12,7 @@ PhpocServer	KEYWORD1
 PhpocEmail	KEYWORD1
 PhpocDateTime	KEYWORD1
 IP6Address	KEYWORD1
+Sppc	KEYWORD1
 
 #######################################
 # Methods and Functions (KEYWORD2)
@@ -32,6 +33,7 @@ connected	KEYWORD2
 available	KEYWORD2
 read	KEYWORD2
 readLine	KEYWORD2
+availableForWrite	KEYWORD2
 peek	KEYWORD2
 write	KEYWORD2
 flush	KEYWORD2

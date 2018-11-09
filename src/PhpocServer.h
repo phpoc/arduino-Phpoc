@@ -37,27 +37,27 @@
 #define SERVER_API_TCP    0
 #define SERVER_API_TELNET 1
 #define SERVER_API_WS     2
-#define SERVER_API_SSL    3
-#define SERVER_API_SSH    4
 
 class PhpocServer : public Server
 {
 	private:
 		static uint16_t server_port[MAX_SOCK_TCP];
+		static const char *server_ws_path[MAX_SOCK_TCP];
+
+	private:
 		uint16_t listen_port;
+		const char *listen_ws_path;
+		const char *listen_ws_proto;
 		uint8_t server_api;
-		const char *ws_path;
-		const char *ssh_username;
-		const char *ssh_password;
-		void session_loop_tcp();
-		void session_loop_ssl();
-		void session_loop_ssh();
+		uint8_t ws_mode;
+		void listen();
+		void accept();
 
 	public:
 		void beginTelnet();
-		void beginWebSocket(const char *path = NULL);
-		void beginSSL();
-		void beginSSH(const char *username = NULL, const char *password = NULL);
+		void beginWebSocket(const char *path, const char *proto = NULL);
+		void beginWebSocketText(const char *path, const char *proto = NULL);
+		void beginWebSocketBinary(const char *path, const char *proto = NULL);
 
 	public:
 		/* Arduino EthernetServer compatible public member functions */

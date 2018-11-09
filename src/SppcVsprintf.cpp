@@ -33,7 +33,7 @@
  * - %S : program memory string
  */
 
-#include <Phpoc.h>
+#include <Sppc.h>
 
 #define STATE_NC 0 /* No Conversion */
 #define STATE_SC 1 /* Start Conversion */
@@ -73,73 +73,6 @@ static void vsp_out_char(char ch)
 	*/
 }
 
-static void vsp_out_u16(uint16_t u16, uint8_t base, uint8_t flags)
-{
-	char digit_buf[7]; /* 1(sign) + 5(digit) + 1(0x00) */
-	int digit, div;
-	char *ptr;
-
-	memset(digit_buf, '0', 6);
-	digit_buf[6] = 0x00;
-	ptr = digit_buf + 5;
-
-	for(digit = 4; digit >=0; digit--, ptr--)
-	{
-		if(u16)
-		{
-			if(digit < 4)
-				u16 /= base;
-			div = u16 % base;
-
-			if(div < 10)
-				*ptr = '0' + div;
-			else
-			{
-				if(flags & FLAG_UPPER)
-					*ptr = ('A' - 10) + div;
-				else
-					*ptr = ('a' - 10) + div;
-			}
-		}
-		else
-			break;
-	}
-
-	ptr = digit_buf;
-	while(*ptr == '0')
-		ptr++;
-
-	if(!*ptr)
-		ptr--;
-	else
-	{
-		if(flags & FLAG_SIGN_MINUS)
-		{
-			ptr--;
-			*ptr = '-';
-		}
-	}
-
-	digit = strlen(ptr);
-
-	if(vsp_ptr)
-	{
-		if((vsp_count + digit) < VSP_COUNT_LIMIT)
-		{
-			strcpy(vsp_ptr, ptr);
-			vsp_ptr += digit;
-			vsp_count += digit;
-		}
-	}
-	/*
-	else
-	{
-		vsp_write(ptr, digit);
-		vsp_count += digit;
-	}
-	*/
-}
-
 static void vsp_out_str(char *str, uint8_t flags)
 {
 	char ch;
@@ -173,9 +106,86 @@ static void vsp_out_str(char *str, uint8_t flags)
 	}
 }
 
+/* 16bit
+ * - hex : 0xffff (max_len 4)
+ * - bin : 0b1111111111111111 (max_len 16)
+ * - dec 32bit : 0 ~ 65535 (max_len 5)
+ * - dec 31bit : -32768 ~ +32767 (max_len 5)
+ * - oct : 0177777 (max_len 6)
+ * 32bit
+ * - hex : 0xffffffff (max_len 8)
+ * - bin : 0b11111111111111111111111111111111 (max_len 32)
+ * - dec 32bit : 0 ~ 4294967295 (max_len 10)
+ * - dec 31bit : -2147483648 ~ +2147483647 (max_len 10)
+ * - oct : 037777777777 (max_len 11)
+ * 64bit
+ * - hex : 0xffffffffffffffff (max_len 16)
+ * - bin : 0b1111111111111111111111111111111111111111111111111111111111111111 (max_len 64)
+ * - dec 64bit : 0 ~ 18446744073709551615 (max_len 20)
+ * - dec 63bit : -9223372036854775808 ~ +9223372036854775807 (max_len 19)
+ * - dec 62bit : -4611686018427387904 ~ +4611686018427387903 (max_len 19)
+ * - oct : 01777777777777777777777 (max_len 22)
+ */
+static void vsp_out_u32(uint32_t u32, uint8_t base, uint8_t flags)
+{
+	char digit_buf[12]; /* 1(sign) + 10(digit) + 1(0x00) */
+	int digit, div;
+	char *ptr;
+
+	memset(digit_buf, '0', 12);
+
+	digit_buf[11] = 0x00;
+	ptr = digit_buf + 10;
+
+	for(digit = 9; digit >= 0; digit--, ptr--)
+	{
+		if(!u32)
+			break;
+
+		if(u32 & 0xffff0000L)
+		{
+			div = u32 % base;
+			u32 = u32 / base;
+		}
+		else
+		{
+			div = (uint16_t)u32 % base;
+			u32 = (uint16_t)u32 / base;
+		}
+
+		if(div < 10)
+			*ptr = '0' + div;
+		else
+		{
+			if(flags & FLAG_UPPER)
+				*ptr = ('A' - 10) + div;
+			else
+				*ptr = ('a' - 10) + div;
+		}
+	}
+
+	ptr = digit_buf;
+	while(*ptr == '0')
+		ptr++;
+
+	if(!*ptr)
+		ptr--;
+	else
+	{
+		if(flags & FLAG_SIGN_MINUS)
+		{
+			ptr--;
+			*ptr = '-';
+		}
+	}
+
+	vsp_out_str(ptr, flags);
+}
+
 static int __vsprintf(const char *format, va_list args, boolean pgm)
 {
 	uint8_t state, flags;
+	uint32_t arg_u32;
 	uint16_t arg_u16;
 	char ch;
 
@@ -209,6 +219,13 @@ static int __vsprintf(const char *format, va_list args, boolean pgm)
 					vsp_out_char(ch);
 					state = STATE_NC;
 					continue;
+				case 'l':
+					//if(flags & FLAG_LONG)
+					//	flags |= FLAG_LONG_LONG;
+					//else
+						flags |= FLAG_LONG;
+					continue;
+
 				case 'c':
 					state = STATE_c;
 					break;
@@ -241,26 +258,49 @@ static int __vsprintf(const char *format, va_list args, boolean pgm)
 			case STATE_c:
 				vsp_out_char(va_arg(args, int));
 				break;
+
 			case STATE_d:
-				arg_u16 = va_arg(args, uint16_t);
-				if(arg_u16 & 0x8000)
+				if(flags & FLAG_LONG)
 				{
-					arg_u16 = ~arg_u16 + 1;
-					flags |= FLAG_SIGN_MINUS;
+					arg_u32 = va_arg(args, uint32_t);
+					if(arg_u32 & 0x80000000L)
+					{
+						arg_u32 = ~arg_u32 + 1;
+						flags |= FLAG_SIGN_MINUS;
+					}
+					vsp_out_u32(arg_u32, 10, flags);
 				}
-				vsp_out_u16(arg_u16, 10, flags);
+				else
+				{
+					arg_u16 = va_arg(args, uint16_t);
+					if(arg_u16 & 0x8000)
+					{
+						arg_u16 = ~arg_u16 + 1;
+						flags |= FLAG_SIGN_MINUS;
+					}
+					vsp_out_u32(arg_u16, 10, flags);
+				}
 				break;
+
 			case STATE_s:
 				arg_u16 = (uint16_t)va_arg(args, char *);
 				vsp_out_str((char *)arg_u16, flags);
 				break;
+
 			case STATE_u:
-				arg_u16 = va_arg(args, uint16_t);
-				vsp_out_u16(arg_u16, 10, flags);
+				if(flags & FLAG_LONG)
+					arg_u32 = va_arg(args, uint32_t);
+				else
+					arg_u32 = va_arg(args, uint16_t);
+				vsp_out_u32(arg_u32, 10, flags);
 				break;
+
 			case STATE_x:
-				arg_u16 = va_arg(args, uint16_t);
-				vsp_out_u16(arg_u16, 16, flags);
+				if(flags & FLAG_LONG)
+					arg_u32 = va_arg(args, uint32_t);
+				else
+					arg_u32 = va_arg(args, uint16_t);
+				vsp_out_u32(arg_u32, 16, flags);
 				break;
 		}
 
@@ -275,21 +315,21 @@ _end_of_conv:
 	return vsp_count;
 }
 
-int PhpocClass::vsprintf(char *str, const __FlashStringHelper *format, va_list args)
+int sppc_vsprintf(char *str, const __FlashStringHelper *format, va_list args)
 {
 	vsp_ptr = str;
 	vsp_count = 0;
 	return ::__vsprintf((const char *)format, args, true);
 }
 
-int PhpocClass::vsprintf(char *str, const char *format, va_list args)
+int sppc_vsprintf(char *str, const char *format, va_list args)
 {
 	vsp_ptr = str;
 	vsp_count = 0;
 	return ::__vsprintf(format, args, false);
 }
 
-int PhpocClass::sprintf(char *str, const __FlashStringHelper *format, ...)
+int sppc_sprintf(char *str, const __FlashStringHelper *format, ...)
 {
 	va_list args;
 	int len;
@@ -304,7 +344,7 @@ int PhpocClass::sprintf(char *str, const __FlashStringHelper *format, ...)
 	return len;
 }
 
-int PhpocClass::sprintf(char *str, const char *format, ...)
+int sppc_sprintf(char *str, const char *format, ...)
 {
 	va_list args;
 	int len;
@@ -319,47 +359,3 @@ int PhpocClass::sprintf(char *str, const char *format, ...)
 	return len;
 }
 
-int phpoc_sprintf(char *str, const __FlashStringHelper *format, ...)
-{
-	va_list args;
-	int len;
-
-	vsp_ptr = str;
-	vsp_count = 0;
-
-	va_start(args, format);
-	len = ::__vsprintf((const char *)format, args, true);
-	va_end(args);
-
-	return len;
-}
-
-/*
-int PhpocClass::printf(const __FlashStringHelper *format, ...)
-{
-	va_list args;
-	int len;
-
-	vsp_ptr = NULL;
-
-	va_start(args, format);
-	len = ::__vsprintf((const char *)format, args, true);
-	va_end(args);
-
-	return len;
-}
-
-int PhpocClass::printf(const char *format, ...)
-{
-	va_list args;
-	int len;
-
-	vsp_ptr = NULL;
-
-	va_start(args, format);
-	len = ::__vsprintf(format, args, false);
-	va_end(args);
-
-	return len;
-}
-*/

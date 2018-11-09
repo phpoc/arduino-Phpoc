@@ -37,53 +37,21 @@
 #include <Client.h>
 #include <IPAddress.h>
 
-#define INCLUDE_PHPOC_CACHE
-
-#ifdef INCLUDE_PHPOC_CACHE
-#define READ_CACHE_SIZE 18  /* 3x 6bytes websocket data */
-#define WRITE_CACHE_SIZE 16
+#ifdef INCLUDE_LIB_V1
+#define INCLUDE_NET_CACHE
 #endif
 
-#ifdef READ_CACHE_SIZE
-#define LINE_BUF_SIZE READ_CACHE_SIZE
-#else
-#define LINE_BUF_SIZE 32
+#ifdef INCLUDE_NET_CACHE
+#define SOCK_READ_CACHE_SIZE 18  /* 3x 6bytes websocket data */
+#define SOCK_WRITE_CACHE_SIZE 16
 #endif
 
-#define MAX_SOCK_TCP 6 /* 1 SSL + 1 SSH + 4 TCP */
-#define MAX_SOCK_UDP 4
-
-/* socket ID */
-#define SOCK_ID_SSL 0 /* tcp0 */
-#define SOCK_ID_SSH 1 /* tcp1 */
-#define SOCK_ID_TCP 2 /* tcp2/3/4/5 */
-
-/* tcp/ssl/ssh state */
-#define TCP_CLOSED     0
-#define TCP_LISTEN     1
-#define TCP_CONNECTED  4
-#define SSL_STOP      11
-#define SSL_CONNECTED 19
-#define SSH_STOP      11
-#define SSH_AUTH      17
-#define SSH_CONNECTED 19
-
-#define SSH_AUTH_SIZE 16 /* buffer size for ssh username/password */
+#define SOCK_LINE_BUF_SIZE 32
 
 class PhpocClient : public Client
 {
 	private:
-#ifdef INCLUDE_PHPOC_CACHE
-		static uint32_t tick_32ms[MAX_SOCK_TCP];
-		static uint8_t  state_32ms[MAX_SOCK_TCP];
-		static uint16_t rxlen_32ms[MAX_SOCK_TCP];
-		static uint8_t  read_cache_len[MAX_SOCK_TCP];
-		static uint8_t  write_cache_len[MAX_SOCK_TCP];
-		static uint8_t  read_cache_buf[MAX_SOCK_TCP][READ_CACHE_SIZE];
-		static uint8_t  write_cache_buf[MAX_SOCK_TCP][WRITE_CACHE_SIZE];
-		static void update_cache(uint8_t id);
-#endif
-		static char read_line_buf[LINE_BUF_SIZE + 2];
+		static char read_line_buf[SOCK_LINE_BUF_SIZE + 2];
 
 	private:
 		uint8_t sock_id;
@@ -92,11 +60,18 @@ class PhpocClient : public Client
 		int connect_ipstr(const char *ipstr, uint16_t port);
 
 	public:
+		static uint8_t conn_flags;
+		static uint8_t init_flags;
+
+	public:
+		uint16_t command(const __FlashStringHelper *format, ...);
+		uint16_t command(const char *format, ...);
 		int connectSSL(IP6Address ip6addr, uint16_t port);
 		int connectSSL(IPAddress ipaddr, uint16_t port);
 		int connectSSL(const char *host, uint16_t port);
-		char *readLine();
+		char *readLine(void);
 		int readLine(uint8_t *buf, size_t size);
+		int availableForWrite(void);
 
 	public:
 		/* Arduino EthernetClient compatible public member functions */
@@ -120,9 +95,28 @@ class PhpocClient : public Client
 		virtual bool operator==(const PhpocClient&);
 		virtual bool operator!=(const PhpocClient& rhs) { return !this->operator==(rhs); };
 
-		friend class PhpocServer;
-
 		using Print::write;
 };
+
+#define NC_FLAG_RENEW_RXLEN 0x01
+#define NC_FLAG_RENEW_STATE 0x02
+#define NC_FLAG_FLUSH_WRITE 0x04
+
+#ifdef INCLUDE_NET_CACHE
+/* NetCache.cpp */
+extern uint8_t  nc_tcp_state[MAX_SOCK_TCP];
+extern uint16_t nc_tcp_rxlen[MAX_SOCK_TCP];
+extern uint8_t  nc_read_len[MAX_SOCK_TCP];
+extern uint8_t  nc_write_len[MAX_SOCK_TCP];
+extern uint8_t  nc_read_buf[MAX_SOCK_TCP][SOCK_READ_CACHE_SIZE];
+extern uint8_t  nc_write_buf[MAX_SOCK_TCP][SOCK_WRITE_CACHE_SIZE];
+extern void nc_init(uint8_t id, int tcp_state);
+extern void nc_update(uint8_t id, uint8_t flags);
+extern int  nc_peek(uint8_t id);
+extern int  nc_read(uint8_t id);
+extern int  nc_read(uint8_t id, uint8_t *rbuf, size_t rlen);
+extern int  nc_read_line(uint8_t id, uint8_t *rbuf, size_t rlen);
+extern int  nc_write(uint8_t id, const uint8_t *wbuf, size_t wlen);
+#endif
 
 #endif

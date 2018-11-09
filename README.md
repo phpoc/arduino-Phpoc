@@ -8,13 +8,13 @@ Available Examples
 * DateTime
 * EmailClient
 * GmailClient
-* SSHServer
-* SSLServer
 * TelnetServer
 * WebClient
 * WebClientIPv6
+* WebRemotePad
 * WebRemotePush
 * WebRemoteSlide
+* WebSerialPlotter
 * WebSSLClient
 * WebSSLClientIPv6
 
