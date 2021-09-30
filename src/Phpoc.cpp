@@ -471,6 +471,9 @@ int PhpocClass::getHostByName(const char *hostname, IPAddress &ipaddr, int wait_
 		return 4;
 	}
 
+	if(ipaddr.fromString(hostname))
+		return 4;
+
 #ifdef PF_LOG_NET
 	if((Sppc.flags & PF_LOG_NET) && Serial)
 		sppc_printf(F("log> dns: query A %s >> "), hostname);

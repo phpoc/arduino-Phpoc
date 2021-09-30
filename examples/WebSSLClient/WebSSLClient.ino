@@ -35,7 +35,8 @@ void setup() {
   Phpoc.begin(PF_LOG_SPI | PF_LOG_NET);
   //Phpoc.begin();
 
-  // connect to web server on port 443:
+  // connect to web server on port 443
+  // this only works with PHPoC [WiFi] Shield R2 or firmware v1.5.0 (or higher)
   if(client.connectSSL(server_name, 443)) {
     // if connected:
     Serial.println("Connected to server");

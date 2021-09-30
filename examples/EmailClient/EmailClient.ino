@@ -46,8 +46,12 @@ void setup() {
   // send email:
   if(email.send() > 0)
     Serial.println("Email send ok");
-  else
-    Serial.println("Email send failed");
+  else {
+    Serial.print("Email send failed: ");
+    Serial.print("Some receiving mail servers may check the 'Reverse DNS Mismatch' as an indication of a possible spam source. ");
+    Serial.print("If the hostname did not match the reverse lookup (PTR) for the IP Address, ");
+    Serial.println("the server may move the email to the spam mailbox or reject it without notice");
+  }
 }
 
 void loop() {
